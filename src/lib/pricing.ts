@@ -65,7 +65,7 @@ function convertCurrency(amount: number, exchangeRatio: number | null): number {
  * Get exchange ratio from settings
  * Returns null if not set (meaning use EGP)
  */
-function getExchangeRatio(settings: Settings): number | null {
+export function getExchangeRatio(settings: Settings): number | null {
   const ratio = settings.exchange_ratio;
   if (ratio === undefined || ratio === null || ratio <= 0) {
     return null;

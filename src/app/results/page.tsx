@@ -6,6 +6,7 @@ import {
   type Employee as PricingEmployee,
   type OverheadType,
   type Settings,
+  getExchangeRatio,
 } from "@/lib/pricing";
 import { Prisma } from "@prisma/client";
 import { ExplainSection } from "./ExplainSection";
@@ -31,6 +32,7 @@ async function getEmployees() {
 
 async function getOverheadTypes(): Promise<OverheadType[]> {
   const types = await db.overheadType.findMany({
+    where: { isActive: true },
     orderBy: { name: "asc" },
   });
   return types.map((type) => ({
@@ -73,12 +75,22 @@ function convertEmployee(
     annualBenefits: Prisma.Decimal | null;
     annualBonus: Prisma.Decimal | null;
     fte: number;
+    isActive: boolean;
     overheadAllocs: Array<{
       overheadTypeId: string;
       share: number;
+      overheadType: {
+        isActive: boolean;
+      };
     }>;
-  }
+  },
+  activeOverheadTypeIds: Set<string>
 ): PricingEmployee {
+  // Filter allocations to only include those where overheadType is active
+  const activeAllocs = emp.overheadAllocs.filter(
+    (alloc) => activeOverheadTypeIds.has(alloc.overheadTypeId)
+  );
+
   return {
     id: emp.id,
     name: emp.name,
@@ -90,7 +102,7 @@ function convertEmployee(
     annualBenefits: emp.annualBenefits ? Number(emp.annualBenefits) : null,
     annualBonus: emp.annualBonus ? Number(emp.annualBonus) : null,
     fte: emp.fte,
-    overheadAllocs: emp.overheadAllocs.map((alloc) => ({
+    overheadAllocs: activeAllocs.map((alloc) => ({
       overheadTypeId: alloc.overheadTypeId,
       share: alloc.share,
     })),
@@ -104,9 +116,21 @@ function formatCurrency(value: number | null): string {
 
 export default async function ResultsPage() {
   const techStacks = await getTechStacks();
-  const employees = await getEmployees();
+  const employeesRaw = await getEmployees();
   const overheadTypes = await getOverheadTypes();
   const settings = await getSettings();
+
+  // Get active overhead type IDs
+  const activeOverheadTypeIds = new Set(overheadTypes.map((t) => t.id));
+
+  // Filter to active employees only
+  const activeEmployeesRaw = employeesRaw.filter((e) => e.isActive);
+  const pricingEmployees = activeEmployeesRaw.map((emp) => convertEmployee(emp, activeOverheadTypeIds));
+
+  // Count inactive items for warnings
+  const inactiveEmployeeCount = employeesRaw.filter((e) => !e.isActive).length;
+  const allOverheadTypes = await db.overheadType.findMany();
+  const inactiveOverheadCount = allOverheadTypes.filter((t) => !t.isActive).length;
 
   // Check if required settings exist
   const requiredSettings = [
@@ -142,11 +166,10 @@ export default async function ResultsPage() {
     );
   }
 
-  const pricingEmployees = employees.map(convertEmployee);
-  const exchangeRatio = settings.exchange_ratio ?? null;
+  const exchangeRatio = getExchangeRatio(settings);
   const currency = exchangeRatio && exchangeRatio > 0 ? "USD" : "EGP";
 
-  // Calculate QA and BA costs (shared across all stacks)
+  // Calculate QA and BA costs (shared across all stacks) - only active employees
   const qaEmployees = pricingEmployees.filter((emp) => emp.category === "QA");
   const baEmployees = pricingEmployees.filter((emp) => emp.category === "BA");
 
@@ -161,7 +184,7 @@ export default async function ResultsPage() {
     settings
   );
 
-  // Calculate pricing for each tech stack
+  // Calculate pricing for each tech stack - only active employees
   const stackResults = techStacks.map((stack) => {
     const result = calculatePricing(stack.id, pricingEmployees, overheadTypes, settings);
     return {
@@ -185,6 +208,22 @@ export default async function ResultsPage() {
           </div>
         )}
       </div>
+
+      {/* Inactive Items Warning */}
+      {(inactiveEmployeeCount > 0 || inactiveOverheadCount > 0) && (
+        <div
+          style={{
+            marginBottom: "2rem",
+            padding: "1rem",
+            border: "1px solid #ffc107",
+            borderRadius: "8px",
+            backgroundColor: "#fff3cd",
+            color: "#856404",
+          }}
+        >
+          <strong>Note:</strong> Excluding from calculations: {inactiveEmployeeCount} inactive employee(s) and {inactiveOverheadCount} inactive overhead type(s). Only active items are included in all cost/rate calculations.
+        </div>
+      )}
 
       {/* QA and BA Costs Section */}
       <div

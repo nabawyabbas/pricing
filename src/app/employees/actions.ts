@@ -15,6 +15,10 @@ function parseFloatValue(value: string | null): number | null {
   return isNaN(parsed) ? null : parsed;
 }
 
+function parseBoolean(value: string | null): boolean {
+  return value === "true" || value === "on";
+}
+
 export async function createEmployee(formData: FormData) {
   const name = formData.get("name") as string;
   const category = formData.get("category") as string;
@@ -25,6 +29,7 @@ export async function createEmployee(formData: FormData) {
   const annualBenefits = formData.get("annualBenefits") as string | null;
   const annualBonus = formData.get("annualBonus") as string | null;
   const fte = formData.get("fte") as string;
+  const isActive = formData.get("isActive") as string | null;
 
   // Validation
   if (!name || name.trim() === "") {
@@ -52,6 +57,7 @@ export async function createEmployee(formData: FormData) {
         annualBenefits: parseDecimal(annualBenefits),
         annualBonus: parseDecimal(annualBonus),
         fte: fte ? parseFloatValue(fte) || 1.0 : 1.0,
+        isActive: isActive !== null ? parseBoolean(isActive) : true, // Default to true
       },
     });
     revalidatePath("/employees");
@@ -78,6 +84,7 @@ export async function updateEmployee(formData: FormData) {
   const annualBenefits = formData.get("annualBenefits") as string | null;
   const annualBonus = formData.get("annualBonus") as string | null;
   const fte = formData.get("fte") as string;
+  const isActive = formData.get("isActive") as string | null;
 
   if (!id || !name || name.trim() === "") {
     return { error: "ID and name are required" };
@@ -105,6 +112,7 @@ export async function updateEmployee(formData: FormData) {
         annualBenefits: parseDecimal(annualBenefits),
         annualBonus: parseDecimal(annualBonus),
         fte: fte ? parseFloatValue(fte) || 1.0 : 1.0,
+        isActive: isActive !== null ? parseBoolean(isActive) : true,
       },
     });
     revalidatePath("/employees");
@@ -120,6 +128,31 @@ export async function updateEmployee(formData: FormData) {
       return { error: "Invalid tech stack selected" };
     }
     return { error: "Failed to update employee" };
+  }
+}
+
+export async function toggleEmployeeActive(formData: FormData) {
+  const id = formData.get("id") as string;
+  const isActive = formData.get("isActive") as string;
+
+  if (!id) {
+    return { error: "ID is required" };
+  }
+
+  try {
+    await db.employee.update({
+      where: { id },
+      data: {
+        isActive: parseBoolean(isActive),
+      },
+    });
+    revalidatePath("/employees");
+    return { success: true };
+  } catch (error: any) {
+    if (error.code === "P2025") {
+      return { error: "Employee not found" };
+    }
+    return { error: "Failed to update employee status" };
   }
 }
 
@@ -143,4 +176,3 @@ export async function deleteEmployee(formData: FormData) {
     return { error: "Failed to delete employee" };
   }
 }
-

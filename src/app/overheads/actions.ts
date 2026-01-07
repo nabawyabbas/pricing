@@ -15,11 +15,16 @@ function parseFloatValue(value: string | null): number | null {
   return isNaN(parsed) ? null : parsed;
 }
 
+function parseBoolean(value: string | null): boolean {
+  return value === "true" || value === "on";
+}
+
 // OverheadType CRUD
 export async function createOverheadType(formData: FormData) {
   const name = formData.get("name") as string;
   const amount = formData.get("amount") as string;
   const period = formData.get("period") as string;
+  const isActive = formData.get("isActive") as string | null;
 
   if (!name || !amount || !period) {
     return { error: "Name, amount, and period are required" };
@@ -41,6 +46,7 @@ export async function createOverheadType(formData: FormData) {
         name: name.trim(),
         amount: amountValue,
         period: period as any,
+        isActive: isActive !== null ? parseBoolean(isActive) : true, // Default to true
       },
     });
 
@@ -56,6 +62,7 @@ export async function updateOverheadType(formData: FormData) {
   const name = formData.get("name") as string;
   const amount = formData.get("amount") as string;
   const period = formData.get("period") as string;
+  const isActive = formData.get("isActive") as string | null;
 
   if (!id || !name || !amount || !period) {
     return { error: "ID, name, amount, and period are required" };
@@ -78,6 +85,7 @@ export async function updateOverheadType(formData: FormData) {
         name: name.trim(),
         amount: amountValue,
         period: period as any,
+        isActive: isActive !== null ? parseBoolean(isActive) : true,
       },
     });
 
@@ -88,6 +96,31 @@ export async function updateOverheadType(formData: FormData) {
       return { error: "Overhead type not found" };
     }
     return { error: "Failed to update overhead type" };
+  }
+}
+
+export async function toggleOverheadTypeActive(formData: FormData) {
+  const id = formData.get("id") as string;
+  const isActive = formData.get("isActive") as string;
+
+  if (!id) {
+    return { error: "ID is required" };
+  }
+
+  try {
+    await db.overheadType.update({
+      where: { id },
+      data: {
+        isActive: parseBoolean(isActive),
+      },
+    });
+    revalidatePath("/overheads");
+    return { success: true };
+  } catch (error: any) {
+    if (error.code === "P2025") {
+      return { error: "Overhead type not found" };
+    }
+    return { error: "Failed to update overhead type status" };
   }
 }
 
@@ -160,11 +193,14 @@ export async function updateOverheadAllocation(formData: FormData) {
 // Allocation helpers per overhead type
 export async function allocateEqually(overheadTypeId: string) {
   try {
-    const employees = await db.employee.findMany();
+    // Only allocate to active employees
+    const employees = await db.employee.findMany({
+      where: { isActive: true },
+    });
     const count = employees.length;
 
     if (count === 0) {
-      return { error: "No employees found" };
+      return { error: "No active employees found" };
     }
 
     const share = 1 / count;
@@ -199,10 +235,13 @@ export async function allocateEqually(overheadTypeId: string) {
 
 export async function allocateProportionalToGross(overheadTypeId: string) {
   try {
-    const employees = await db.employee.findMany();
+    // Only allocate to active employees
+    const employees = await db.employee.findMany({
+      where: { isActive: true },
+    });
 
     if (employees.length === 0) {
-      return { error: "No employees found" };
+      return { error: "No active employees found" };
     }
 
     // Calculate total gross monthly
@@ -245,12 +284,17 @@ export async function allocateProportionalToGross(overheadTypeId: string) {
 
 export async function normalizeTo100Percent(overheadTypeId: string) {
   try {
+    // Only normalize allocations for active employees and active overhead type
     const allocations = await db.overheadAllocation.findMany({
-      where: { overheadTypeId },
+      where: {
+        overheadTypeId,
+        employee: { isActive: true },
+        overheadType: { isActive: true },
+      },
     });
 
     if (allocations.length === 0) {
-      return { error: "No allocations found for this overhead type" };
+      return { error: "No active allocations found for this overhead type" };
     }
 
     // Calculate total

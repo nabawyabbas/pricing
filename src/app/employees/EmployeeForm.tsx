@@ -216,29 +216,50 @@ export function EmployeeForm({ techStacks, action }: EmployeeFormProps) {
         </div>
       </div>
 
-      <div style={{ marginBottom: "1rem" }}>
-        <label
-          htmlFor="fte"
-          style={{ display: "block", marginBottom: "0.5rem", fontWeight: "500" }}
-        >
-          FTE (Full-Time Equivalent, default: 1.0)
-        </label>
-        <input
-          type="number"
-          id="fte"
-          name="fte"
-          step="0.1"
-          min="0"
-          max="1"
-          defaultValue="1.0"
-          style={{
-            width: "100%",
-            padding: "0.5rem",
-            fontSize: "1rem",
-            border: "1px solid #ccc",
-            borderRadius: "4px",
-          }}
-        />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
+        <div>
+          <label
+            htmlFor="fte"
+            style={{ display: "block", marginBottom: "0.5rem", fontWeight: "500" }}
+          >
+            FTE (Full-Time Equivalent, default: 1.0)
+          </label>
+          <input
+            type="number"
+            id="fte"
+            name="fte"
+            step="0.1"
+            min="0"
+            max="1"
+            defaultValue="1.0"
+            style={{
+              width: "100%",
+              padding: "0.5rem",
+              fontSize: "1rem",
+              border: "1px solid #ccc",
+              borderRadius: "4px",
+            }}
+          />
+        </div>
+        <div style={{ display: "flex", alignItems: "flex-end" }}>
+          <label
+            htmlFor="isActive"
+            style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}
+          >
+            <input
+              type="checkbox"
+              id="isActive"
+              name="isActive"
+              defaultChecked
+              style={{
+                width: "1.2rem",
+                height: "1.2rem",
+                cursor: "pointer",
+              }}
+            />
+            <span style={{ fontWeight: "500" }}>Active (default: true)</span>
+          </label>
+        </div>
       </div>
 
       <button

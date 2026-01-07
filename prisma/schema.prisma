@@ -1,0 +1,74 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+datasource db {
+  provider = "mysql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum EmployeeCategory {
+  DEV
+  QA
+  BA
+}
+
+model TechStack {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  employees Employee[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Employee {
+  id              String           @id @default(cuid())
+  name            String
+  category        EmployeeCategory
+  techStackId     String?
+  techStack       TechStack?       @relation(fields: [techStackId], references: [id])
+  grossMonthly    Decimal          @db.Decimal(10, 2)
+  netMonthly      Decimal          @db.Decimal(10, 2)
+  oncostRate      Float?
+  annualBenefits  Decimal?         @db.Decimal(10, 2)
+  annualBonus     Decimal?         @db.Decimal(10, 2)
+  fte             Float            @default(1.0)
+  overheadAlloc   OverheadAllocation?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+}
+
+model Assumptions {
+  id                         String   @id @default(cuid())
+  devReleasableHoursPerMonth Float    @default(100)
+  standardHoursPerMonth      Float    @default(160)
+  qaRatio                    Float    @default(0.5)
+  baRatio                    Float    @default(0.25)
+  margin                     Float    @default(0.2)
+  risk                       Float    @default(0.1)
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+}
+
+model OverheadPool {
+  id                      String   @id @default(cuid())
+  managementOverheadAnnual Decimal @db.Decimal(10, 2)
+  companyOverheadAnnual   Decimal @db.Decimal(10, 2)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+}
+
+model OverheadAllocation {
+  id          String   @id @default(cuid())
+  employeeId  String   @unique
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  mgmtShare   Float
+  companyShare Float
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

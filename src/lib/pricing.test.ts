@@ -6,21 +6,31 @@ import {
   calculateBaCostPerDevRelHour,
   calculateReleaseableCost,
   type Employee,
-  type OverheadPool,
-  type Assumptions,
+  type OverheadType,
+  type Settings,
 } from "./pricing";
 
 describe("pricing calculations", () => {
-  const baseOverheadPool: OverheadPool = {
-    managementOverheadAnnual: 100000,
-    companyOverheadAnnual: 200000,
-  };
+  const baseOverheadTypes: OverheadType[] = [
+    {
+      id: "overhead-mgmt",
+      name: "Management",
+      amount: 100000,
+      period: "annual",
+    },
+    {
+      id: "overhead-company",
+      name: "Company",
+      amount: 200000,
+      period: "annual",
+    },
+  ];
 
-  const baseAssumptions: Assumptions = {
-    devReleasableHoursPerMonth: 100,
-    standardHoursPerMonth: 160,
-    qaRatio: 0.5,
-    baRatio: 0.25,
+  const baseSettings: Settings = {
+    dev_releasable_hours_per_month: 100,
+    standard_hours_per_month: 160,
+    qa_ratio: 0.5,
+    ba_ratio: 0.25,
     margin: 0.2,
     risk: 0.1,
   };
@@ -40,10 +50,10 @@ describe("pricing calculations", () => {
     annualBenefits: 5000,
     annualBonus: 10000,
     fte,
-    overheadAlloc: {
-      mgmtShare: 0.1,
-      companyShare: 0.2,
-    },
+    overheadAllocs: [
+      { overheadTypeId: "overhead-mgmt", share: 0.1 },
+      { overheadTypeId: "overhead-company", share: 0.2 },
+    ],
   });
 
   const createQaEmployee = (grossMonthly: number = 8000): Employee => ({
@@ -57,10 +67,10 @@ describe("pricing calculations", () => {
     annualBenefits: 5000,
     annualBonus: 5000,
     fte: 1.0,
-    overheadAlloc: {
-      mgmtShare: 0.1,
-      companyShare: 0.2,
-    },
+    overheadAllocs: [
+      { overheadTypeId: "overhead-mgmt", share: 0.1 },
+      { overheadTypeId: "overhead-company", share: 0.2 },
+    ],
   });
 
   const createBaEmployee = (grossMonthly: number = 9000): Employee => ({
@@ -74,10 +84,10 @@ describe("pricing calculations", () => {
     annualBenefits: 5000,
     annualBonus: 5000,
     fte: 1.0,
-    overheadAlloc: {
-      mgmtShare: 0.1,
-      companyShare: 0.2,
-    },
+    overheadAllocs: [
+      { overheadTypeId: "overhead-mgmt", share: 0.1 },
+      { overheadTypeId: "overhead-company", share: 0.2 },
+    ],
   });
 
   describe("devReleasableHoursPerMonth 100 -> 120 reduces devCostPerRelHour", () => {
@@ -85,26 +95,26 @@ describe("pricing calculations", () => {
       const techStackId = "stack-1";
       const devEmployee = createDevEmployee(techStackId, 10000, 1.0);
 
-      const assumptions100: Assumptions = {
-        ...baseAssumptions,
-        devReleasableHoursPerMonth: 100,
+      const settings100: Settings = {
+        ...baseSettings,
+        dev_releasable_hours_per_month: 100,
       };
 
-      const assumptions120: Assumptions = {
-        ...baseAssumptions,
-        devReleasableHoursPerMonth: 120,
+      const settings120: Settings = {
+        ...baseSettings,
+        dev_releasable_hours_per_month: 120,
       };
 
       const cost100 = calculateDevCostPerRelHour(
         [devEmployee],
-        baseOverheadPool,
-        assumptions100
+        baseOverheadTypes,
+        settings100
       );
 
       const cost120 = calculateDevCostPerRelHour(
         [devEmployee],
-        baseOverheadPool,
-        assumptions120
+        baseOverheadTypes,
+        settings120
       );
 
       expect(cost100).not.toBeNull();
@@ -119,34 +129,34 @@ describe("pricing calculations", () => {
       const devEmployee = createDevEmployee(techStackId);
       const qaEmployee = createQaEmployee();
 
-      const assumptionsLow: Assumptions = {
-        ...baseAssumptions,
-        qaRatio: 0.3,
+      const settingsLow: Settings = {
+        ...baseSettings,
+        qa_ratio: 0.3,
       };
 
-      const assumptionsHigh: Assumptions = {
-        ...baseAssumptions,
-        qaRatio: 0.7,
+      const settingsHigh: Settings = {
+        ...baseSettings,
+        qa_ratio: 0.7,
       };
 
       // Calculate dev cost (same for both)
       const devCost = calculateDevCostPerRelHour(
         [devEmployee],
-        baseOverheadPool,
-        baseAssumptions
+        baseOverheadTypes,
+        baseSettings
       );
 
       // Calculate QA costs with different ratios
       const qaCostLow = calculateQaCostPerDevRelHour(
         [qaEmployee],
-        baseOverheadPool,
-        assumptionsLow
+        baseOverheadTypes,
+        settingsLow
       );
 
       const qaCostHigh = calculateQaCostPerDevRelHour(
         [qaEmployee],
-        baseOverheadPool,
-        assumptionsHigh
+        baseOverheadTypes,
+        settingsHigh
       );
 
       // Calculate releaseable costs
@@ -169,30 +179,50 @@ describe("pricing calculations", () => {
   });
 
   describe("increasing overhead pools increases costs", () => {
-    it("should increase devCostPerRelHour when overhead pools increase", () => {
+    it("should increase devCostPerRelHour when overhead amounts increase", () => {
       const techStackId = "stack-1";
       const devEmployee = createDevEmployee(techStackId);
 
-      const lowOverheadPool: OverheadPool = {
-        managementOverheadAnnual: 50000,
-        companyOverheadAnnual: 100000,
-      };
+      const lowOverheadTypes: OverheadType[] = [
+        {
+          id: "overhead-mgmt",
+          name: "Management",
+          amount: 50000,
+          period: "annual",
+        },
+        {
+          id: "overhead-company",
+          name: "Company",
+          amount: 100000,
+          period: "annual",
+        },
+      ];
 
-      const highOverheadPool: OverheadPool = {
-        managementOverheadAnnual: 200000,
-        companyOverheadAnnual: 400000,
-      };
+      const highOverheadTypes: OverheadType[] = [
+        {
+          id: "overhead-mgmt",
+          name: "Management",
+          amount: 200000,
+          period: "annual",
+        },
+        {
+          id: "overhead-company",
+          name: "Company",
+          amount: 400000,
+          period: "annual",
+        },
+      ];
 
       const costLow = calculateDevCostPerRelHour(
         [devEmployee],
-        lowOverheadPool,
-        baseAssumptions
+        lowOverheadTypes,
+        baseSettings
       );
 
       const costHigh = calculateDevCostPerRelHour(
         [devEmployee],
-        highOverheadPool,
-        baseAssumptions
+        highOverheadTypes,
+        baseSettings
       );
 
       expect(costLow).not.toBeNull();
@@ -200,32 +230,92 @@ describe("pricing calculations", () => {
       expect(costHigh!).toBeGreaterThan(costLow!);
     });
 
-    it("should increase QA cost when overhead pools increase", () => {
+    it("should increase QA cost when overhead amounts increase", () => {
       const qaEmployee = createQaEmployee();
 
-      const lowOverheadPool: OverheadPool = {
-        managementOverheadAnnual: 50000,
-        companyOverheadAnnual: 100000,
-      };
+      const lowOverheadTypes: OverheadType[] = [
+        {
+          id: "overhead-mgmt",
+          name: "Management",
+          amount: 50000,
+          period: "annual",
+        },
+        {
+          id: "overhead-company",
+          name: "Company",
+          amount: 100000,
+          period: "annual",
+        },
+      ];
 
-      const highOverheadPool: OverheadPool = {
-        managementOverheadAnnual: 200000,
-        companyOverheadAnnual: 400000,
-      };
+      const highOverheadTypes: OverheadType[] = [
+        {
+          id: "overhead-mgmt",
+          name: "Management",
+          amount: 200000,
+          period: "annual",
+        },
+        {
+          id: "overhead-company",
+          name: "Company",
+          amount: 400000,
+          period: "annual",
+        },
+      ];
 
       const costLow = calculateQaCostPerDevRelHour(
         [qaEmployee],
-        lowOverheadPool,
-        baseAssumptions
+        lowOverheadTypes,
+        baseSettings
       );
 
       const costHigh = calculateQaCostPerDevRelHour(
         [qaEmployee],
-        highOverheadPool,
-        baseAssumptions
+        highOverheadTypes,
+        baseSettings
       );
 
       expect(costHigh).toBeGreaterThan(costLow);
+    });
+
+    it("should handle monthly and quarterly overhead periods", () => {
+      const techStackId = "stack-1";
+      const devEmployee = createDevEmployee(techStackId);
+
+      const monthlyOverheadTypes: OverheadType[] = [
+        {
+          id: "overhead-mgmt",
+          name: "Management",
+          amount: 10000, // monthly
+          period: "monthly",
+        },
+        {
+          id: "overhead-company",
+          name: "Company",
+          amount: 20000, // monthly
+          period: "monthly",
+        },
+      ];
+
+      // Monthly amounts should be converted to annual (multiplied by 12)
+      // So 10000 monthly = 120000 annual, 20000 monthly = 240000 annual
+      // This should be equivalent to the base overhead types (100000 and 200000 annual)
+      const costMonthly = calculateDevCostPerRelHour(
+        [devEmployee],
+        monthlyOverheadTypes,
+        baseSettings
+      );
+
+      const costAnnual = calculateDevCostPerRelHour(
+        [devEmployee],
+        baseOverheadTypes,
+        baseSettings
+      );
+
+      expect(costMonthly).not.toBeNull();
+      expect(costAnnual).not.toBeNull();
+      // Monthly should be higher since 120000 > 100000 and 240000 > 200000
+      expect(costMonthly!).toBeGreaterThan(costAnnual!);
     });
   });
 
@@ -233,8 +323,8 @@ describe("pricing calculations", () => {
     it("should handle missing QA team (return 0 cost)", () => {
       const qaCost = calculateQaCostPerDevRelHour(
         [],
-        baseOverheadPool,
-        baseAssumptions
+        baseOverheadTypes,
+        baseSettings
       );
 
       expect(qaCost).toBe(0);
@@ -243,8 +333,8 @@ describe("pricing calculations", () => {
     it("should handle missing BA team (return 0 cost)", () => {
       const baCost = calculateBaCostPerDevRelHour(
         [],
-        baseOverheadPool,
-        baseAssumptions
+        baseOverheadTypes,
+        baseSettings
       );
 
       expect(baCost).toBe(0);
@@ -253,8 +343,8 @@ describe("pricing calculations", () => {
     it("should return null for devCostPerRelHour when no DEV employees", () => {
       const cost = calculateDevCostPerRelHour(
         [],
-        baseOverheadPool,
-        baseAssumptions
+        baseOverheadTypes,
+        baseSettings
       );
 
       expect(cost).toBeNull();
@@ -264,28 +354,129 @@ describe("pricing calculations", () => {
       const techStackId = "stack-1";
       const devEmployee = createDevEmployee(techStackId, 10000, 0); // 0 FTE
 
-      const assumptions: Assumptions = {
-        ...baseAssumptions,
-        devReleasableHoursPerMonth: 100,
+      const settings: Settings = {
+        ...baseSettings,
+        dev_releasable_hours_per_month: 100,
       };
 
       expect(() => {
-        calculateDevCostPerRelHour([devEmployee], baseOverheadPool, assumptions);
+        calculateDevCostPerRelHour([devEmployee], baseOverheadTypes, settings);
       }).toThrow("devHoursCapacity is zero");
     });
 
     it("should throw error when standardHoursPerMonth is zero for QA", () => {
       const qaEmployee = createQaEmployee();
 
-      const assumptions: Assumptions = {
-        ...baseAssumptions,
-        standardHoursPerMonth: 0,
+      const settings: Settings = {
+        ...baseSettings,
+        standard_hours_per_month: 0,
       };
 
       expect(() => {
-        calculateQaCostPerDevRelHour([qaEmployee], baseOverheadPool, assumptions);
-      }).toThrow("standardHoursPerMonth is zero");
+        calculateQaCostPerDevRelHour([qaEmployee], baseOverheadTypes, settings);
+      }).toThrow("standard_hours_per_month is zero");
+    });
+
+    it("should handle employee with no overhead allocations", () => {
+      const techStackId = "stack-1";
+      const devEmployee: Employee = {
+        ...createDevEmployee(techStackId),
+        overheadAllocs: [],
+      };
+
+      const cost = calculateDevCostPerRelHour(
+        [devEmployee],
+        baseOverheadTypes,
+        baseSettings
+      );
+
+      // Should still calculate, just without overhead
+      expect(cost).not.toBeNull();
+    });
+
+    it("should handle missing overhead type in allocation", () => {
+      const techStackId = "stack-1";
+      const devEmployee: Employee = {
+        ...createDevEmployee(techStackId),
+        overheadAllocs: [
+          { overheadTypeId: "non-existent-id", share: 0.1 },
+        ],
+      };
+
+      const cost = calculateDevCostPerRelHour(
+        [devEmployee],
+        baseOverheadTypes,
+        baseSettings
+      );
+
+      // Should still calculate, missing overhead type is ignored
+      expect(cost).not.toBeNull();
+    });
+  });
+
+  describe("exchange ratio currency conversion", () => {
+    it("should convert EGP to USD when exchange_ratio is provided", () => {
+      const techStackId = "stack-1";
+      const devEmployee = createDevEmployee(techStackId, 100000, 1.0); // 100,000 EGP/month
+
+      const settingsEGP: Settings = {
+        ...baseSettings,
+        exchange_ratio: 0, // No conversion, use EGP
+      };
+
+      const settingsUSD: Settings = {
+        ...baseSettings,
+        exchange_ratio: 50, // 1 USD = 50 EGP
+      };
+
+      const costEGP = calculateDevCostPerRelHour(
+        [devEmployee],
+        baseOverheadTypes,
+        settingsEGP
+      );
+
+      const costUSD = calculateDevCostPerRelHour(
+        [devEmployee],
+        baseOverheadTypes,
+        settingsUSD
+      );
+
+      expect(costEGP).not.toBeNull();
+      expect(costUSD).not.toBeNull();
+      // USD cost should be approximately 1/50th of EGP cost
+      expect(costUSD!).toBeCloseTo(costEGP! / 50, 2);
+    });
+
+    it("should handle exchange_ratio of 0 or null (use EGP)", () => {
+      const techStackId = "stack-1";
+      const devEmployee = createDevEmployee(techStackId, 100000, 1.0);
+
+      const settingsNoRatio: Settings = {
+        ...baseSettings,
+        // exchange_ratio not set
+      };
+
+      const settingsZeroRatio: Settings = {
+        ...baseSettings,
+        exchange_ratio: 0,
+      };
+
+      const costNoRatio = calculateDevCostPerRelHour(
+        [devEmployee],
+        baseOverheadTypes,
+        settingsNoRatio
+      );
+
+      const costZeroRatio = calculateDevCostPerRelHour(
+        [devEmployee],
+        baseOverheadTypes,
+        settingsZeroRatio
+      );
+
+      expect(costNoRatio).not.toBeNull();
+      expect(costZeroRatio).not.toBeNull();
+      // Both should be the same (in EGP)
+      expect(costNoRatio).toBeCloseTo(costZeroRatio!, 2);
     });
   });
 });
-

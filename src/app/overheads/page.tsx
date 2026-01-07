@@ -1,84 +1,82 @@
 import { db } from "@/lib/db";
 import {
-  updateOverheadPool,
+  createOverheadType,
+  updateOverheadType,
+  deleteOverheadType,
   allocateEqually,
   allocateProportionalToGross,
   normalizeTo100Percent,
 } from "./actions";
-import { EmployeeAllocationRow } from "./EmployeeAllocationRow";
+import { OverheadTypeRow } from "./OverheadTypeRow";
+import { AllocationGrid } from "./AllocationGrid";
 import { Prisma } from "@prisma/client";
 
-async function getOverheadPool() {
-  return await db.overheadPool.findFirst();
+async function getOverheadTypes() {
+  return await db.overheadType.findMany({
+    orderBy: { name: "asc" },
+    include: {
+      _count: {
+        select: { allocations: true },
+      },
+    },
+  });
 }
 
 async function getEmployees() {
   return await db.employee.findMany({
     include: {
       techStack: true,
-      overheadAlloc: true,
+      overheadAllocs: {
+        include: {
+          overheadType: true,
+        },
+      },
     },
     orderBy: [{ category: "asc" }, { name: "asc" }],
   });
 }
 
-async function handleUpdatePool(formData: FormData) {
+async function handleCreateType(formData: FormData) {
   "use server";
-  await updateOverheadPool(formData);
-}
-
-
-async function handleAllocateEqually() {
-  "use server";
-  await allocateEqually();
-}
-
-async function handleAllocateProportional() {
-  "use server";
-  await allocateProportionalToGross();
-}
-
-async function handleNormalize() {
-  "use server";
-  await normalizeTo100Percent();
+  await createOverheadType(formData);
 }
 
 function formatDecimal(value: Prisma.Decimal | null): string {
   return value ? Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00";
 }
 
-function formatFloat(value: number | null): string {
-  if (value === null) return "";
-  return (value * 100).toFixed(2);
-}
-
-function calculateTotals(employees: Array<{
-  overheadAlloc: { mgmtShare: number; companyShare: number } | null;
-}>) {
-  const totals = employees.reduce(
-    (acc, emp) => {
-      if (emp.overheadAlloc) {
-        acc.mgmt += emp.overheadAlloc.mgmtShare;
-        acc.company += emp.overheadAlloc.companyShare;
-      }
-      return acc;
-    },
-    { mgmt: 0, company: 0 }
-  );
-  return totals;
+function convertToAnnual(amount: number, period: string): number {
+  switch (period) {
+    case "annual":
+      return amount;
+    case "monthly":
+      return amount * 12;
+    case "quarterly":
+      return amount * 4;
+    default:
+      return amount;
+  }
 }
 
 export default async function OverheadsPage() {
-  const overheadPool = await getOverheadPool();
+  const overheadTypes = await getOverheadTypes();
   const employees = await getEmployees();
-  const totals = calculateTotals(employees);
-  const isWarning = Math.abs(totals.mgmt - 1) > 0.01 || Math.abs(totals.company - 1) > 0.01;
+
+  // Calculate totals per overhead type
+  const totalsByType = new Map<string, number>();
+  overheadTypes.forEach((type) => {
+    const total = employees.reduce((sum, emp) => {
+      const alloc = emp.overheadAllocs.find((a) => a.overheadTypeId === type.id);
+      return sum + (alloc?.share ?? 0);
+    }, 0);
+    totalsByType.set(type.id, total);
+  });
 
   return (
-    <div style={{ maxWidth: "1200px", margin: "0 auto", padding: "2rem" }}>
+    <div style={{ maxWidth: "1400px", margin: "0 auto", padding: "2rem" }}>
       <h1 style={{ marginBottom: "2rem" }}>Overhead Management</h1>
 
-      {/* Overhead Pool Section */}
+      {/* Overhead Types CRUD */}
       <div
         style={{
           marginBottom: "2rem",
@@ -88,23 +86,19 @@ export default async function OverheadsPage() {
           backgroundColor: "#f9f9f9",
         }}
       >
-        <h2 style={{ marginBottom: "1rem" }}>Overhead Pools (Annual)</h2>
-        <form action={handleUpdatePool}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+        <h2 style={{ marginBottom: "1rem" }}>Overhead Types</h2>
+        <form action={handleCreateType}>
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: "1rem", alignItems: "end" }}>
             <div>
-              <label
-                htmlFor="managementOverheadAnnual"
-                style={{ display: "block", marginBottom: "0.5rem", fontWeight: "500" }}
-              >
-                Management Overhead Annual
+              <label htmlFor="name" style={{ display: "block", marginBottom: "0.5rem", fontWeight: "500" }}>
+                Name *
               </label>
               <input
-                type="number"
-                id="managementOverheadAnnual"
-                name="managementOverheadAnnual"
-                step="0.01"
+                type="text"
+                id="name"
+                name="name"
                 required
-                defaultValue={overheadPool ? formatDecimal(overheadPool.managementOverheadAnnual) : ""}
+                placeholder="e.g., Management"
                 style={{
                   width: "100%",
                   padding: "0.5rem",
@@ -115,19 +109,17 @@ export default async function OverheadsPage() {
               />
             </div>
             <div>
-              <label
-                htmlFor="companyOverheadAnnual"
-                style={{ display: "block", marginBottom: "0.5rem", fontWeight: "500" }}
-              >
-                Company Overhead Annual
+              <label htmlFor="amount" style={{ display: "block", marginBottom: "0.5rem", fontWeight: "500" }}>
+                Amount *
               </label>
               <input
                 type="number"
-                id="companyOverheadAnnual"
-                name="companyOverheadAnnual"
+                id="amount"
+                name="amount"
                 step="0.01"
+                min="0"
                 required
-                defaultValue={overheadPool ? formatDecimal(overheadPool.companyOverheadAnnual) : ""}
+                placeholder="0.00"
                 style={{
                   width: "100%",
                   padding: "0.5rem",
@@ -136,110 +128,52 @@ export default async function OverheadsPage() {
                   borderRadius: "4px",
                 }}
               />
+            </div>
+            <div>
+              <label htmlFor="period" style={{ display: "block", marginBottom: "0.5rem", fontWeight: "500" }}>
+                Period *
+              </label>
+              <select
+                id="period"
+                name="period"
+                required
+                style={{
+                  width: "100%",
+                  padding: "0.5rem",
+                  fontSize: "1rem",
+                  border: "1px solid #ccc",
+                  borderRadius: "4px",
+                }}
+              >
+                <option value="annual">Annual</option>
+                <option value="monthly">Monthly</option>
+                <option value="quarterly">Quarterly</option>
+              </select>
+            </div>
+            <div>
+              <button
+                type="submit"
+                style={{
+                  width: "100%",
+                  padding: "0.5rem 1rem",
+                  fontSize: "1rem",
+                  backgroundColor: "#0070f3",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  fontWeight: "500",
+                }}
+              >
+                Create Type
+              </button>
             </div>
           </div>
-          <button
-            type="submit"
-            style={{
-              marginTop: "1rem",
-              padding: "0.5rem 1.5rem",
-              fontSize: "1rem",
-              backgroundColor: "#0070f3",
-              color: "white",
-              border: "none",
-              borderRadius: "4px",
-              cursor: "pointer",
-              fontWeight: "500",
-            }}
-          >
-            Update Overhead Pools
-          </button>
         </form>
-      </div>
 
-      {/* Allocation Buttons */}
-      <div
-        style={{
-          marginBottom: "1rem",
-          display: "flex",
-          gap: "0.5rem",
-          flexWrap: "wrap",
-        }}
-      >
-        <form action={handleAllocateEqually}>
-          <button
-            type="submit"
-            style={{
-              padding: "0.5rem 1rem",
-              fontSize: "0.9rem",
-              backgroundColor: "#28a745",
-              color: "white",
-              border: "none",
-              borderRadius: "4px",
-              cursor: "pointer",
-            }}
-          >
-            Allocate Equally
-          </button>
-        </form>
-        <form action={handleAllocateProportional}>
-          <button
-            type="submit"
-            style={{
-              padding: "0.5rem 1rem",
-              fontSize: "0.9rem",
-              backgroundColor: "#28a745",
-              color: "white",
-              border: "none",
-              borderRadius: "4px",
-              cursor: "pointer",
-            }}
-          >
-            Allocate Proportional to Gross
-          </button>
-        </form>
-        <form action={handleNormalize}>
-          <button
-            type="submit"
-            style={{
-              padding: "0.5rem 1rem",
-              fontSize: "0.9rem",
-              backgroundColor: "#ffc107",
-              color: "#000",
-              border: "none",
-              borderRadius: "4px",
-              cursor: "pointer",
-            }}
-          >
-            Normalize to 100%
-          </button>
-        </form>
-      </div>
-
-      {/* Warning if shares don't sum to 1 */}
-      {isWarning && (
-        <div
-          style={{
-            marginBottom: "1rem",
-            padding: "1rem",
-            backgroundColor: "#fff3cd",
-            border: "1px solid #ffc107",
-            borderRadius: "4px",
-            color: "#856404",
-          }}
-        >
-          <strong>Warning:</strong> Shares do not sum to 100%. Management:{" "}
-          {(totals.mgmt * 100).toFixed(2)}%, Company: {(totals.company * 100).toFixed(2)}%
-        </div>
-      )}
-
-      {/* Employee Allocation Table */}
-      <div>
-        <h2 style={{ marginBottom: "1rem" }}>Employee Overhead Allocations</h2>
-        {employees.length === 0 ? (
-          <p style={{ color: "#666", fontStyle: "italic" }}>No employees found.</p>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
+        {/* Overhead Types List */}
+        {overheadTypes.length > 0 && (
+          <div style={{ marginTop: "1.5rem" }}>
             <table
               style={{
                 width: "100%",
@@ -247,42 +181,56 @@ export default async function OverheadsPage() {
                 backgroundColor: "white",
                 border: "1px solid #ddd",
                 borderRadius: "4px",
+                marginTop: "1rem",
               }}
             >
               <thead>
                 <tr style={{ backgroundColor: "#f8f9fa" }}>
                   <th style={{ padding: "0.75rem", textAlign: "left", borderBottom: "2px solid #ddd" }}>Name</th>
-                  <th style={{ padding: "0.75rem", textAlign: "left", borderBottom: "2px solid #ddd" }}>Category</th>
-                  <th style={{ padding: "0.75rem", textAlign: "left", borderBottom: "2px solid #ddd" }}>Tech Stack</th>
-                  <th style={{ padding: "0.75rem", textAlign: "left", borderBottom: "2px solid #ddd" }}>Gross Monthly</th>
-                  <th style={{ padding: "0.75rem", textAlign: "center", borderBottom: "2px solid #ddd" }}>Mgmt Share (%)</th>
-                  <th style={{ padding: "0.75rem", textAlign: "center", borderBottom: "2px solid #ddd" }}>Company Share (%)</th>
+                  <th style={{ padding: "0.75rem", textAlign: "right", borderBottom: "2px solid #ddd" }}>Amount</th>
+                  <th style={{ padding: "0.75rem", textAlign: "left", borderBottom: "2px solid #ddd" }}>Period</th>
+                  <th style={{ padding: "0.75rem", textAlign: "right", borderBottom: "2px solid #ddd" }}>Annual Equivalent</th>
+                  <th style={{ padding: "0.75rem", textAlign: "center", borderBottom: "2px solid #ddd" }}>Allocations</th>
                   <th style={{ padding: "0.75rem", textAlign: "center", borderBottom: "2px solid #ddd" }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {employees.map((employee) => (
-                  <EmployeeAllocationRow key={employee.id} employee={employee} />
+                {overheadTypes.map((type) => (
+                  <OverheadTypeRow
+                    key={type.id}
+                    overheadType={type}
+                    totalShare={totalsByType.get(type.id) ?? 0}
+                  />
                 ))}
-                <tr style={{ backgroundColor: "#f8f9fa", fontWeight: "bold" }}>
-                  <td colSpan={4} style={{ padding: "0.75rem", textAlign: "right" }}>
-                    Totals:
-                  </td>
-                  <td style={{ padding: "0.75rem", textAlign: "center" }}>
-                    {(totals.mgmt * 100).toFixed(2)}%
-                  </td>
-                  <td style={{ padding: "0.75rem", textAlign: "center" }}>
-                    {(totals.company * 100).toFixed(2)}%
-                  </td>
-                  <td style={{ padding: "0.75rem" }}></td>
-                </tr>
               </tbody>
             </table>
           </div>
         )}
       </div>
+
+      {/* Allocation Grid */}
+      {overheadTypes.length > 0 && (
+        <div>
+          <h2 style={{ marginBottom: "1rem" }}>Employee Overhead Allocations</h2>
+          <AllocationGrid employees={employees} overheadTypes={overheadTypes} totalsByType={totalsByType} />
+        </div>
+      )}
+
+      {overheadTypes.length === 0 && (
+        <div
+          style={{
+            padding: "2rem",
+            textAlign: "center",
+            color: "#666",
+            fontStyle: "italic",
+            border: "1px solid #ddd",
+            borderRadius: "8px",
+            backgroundColor: "#f9f9f9",
+          }}
+        >
+          No overhead types found. Create one above to start managing allocations.
+        </div>
+      )}
     </div>
   );
 }
-
-

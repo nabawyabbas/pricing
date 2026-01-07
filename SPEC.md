@@ -23,34 +23,56 @@ Releaseable hour composition:
 - annualBonus (number, optional)
 - fte (default 1.0)
 
-### Overheads
-- managementOverheadAnnual (money)
-- companyOverheadAnnual (money)
+### Settings
+- key (string, unique identifier)
+- value (string, stored as string, converted based on valueType)
+- valueType (enum: "string" | "number" | "float" | "integer" | "boolean")
+- group (string, e.g., "hours", "ratios", "pricing")
+- unit (string, optional, e.g., "hours/month", "%", "$")
+
+Example settings:
+- devReleasableHoursPerMonth: value="100", valueType="float", group="hours", unit="hours/month"
+- standardHoursPerMonth: value="160", valueType="float", group="hours", unit="hours/month"
+- qaRatio: value="0.5", valueType="float", group="ratios", unit=""
+- baRatio: value="0.25", valueType="float", group="ratios", unit=""
+- margin: value="0.2", valueType="float", group="pricing", unit=""
+- risk: value="0.1", valueType="float", group="pricing", unit=""
+
+### Overhead Types
+- name (string, e.g., "Management", "Company", "Infrastructure")
+- amount (money)
+- period (enum: "annual" | "monthly" | "quarterly")
 
 ### Overhead Allocation (per employee)
-- mgmtShare (0..1)
-- companyShare (0..1)
-
-### Assumptions
-- devReleasableHoursPerMonth (default 100, adjustable)
-- standardHoursPerMonth (default 160, adjustable; for QA/BA hourly conversion)
-- qaRatio (default 0.5)
-- baRatio (default 0.25)
-- margin (e.g. 0.2)
-- risk (e.g. 0.1)
+- employeeId (reference to Employee)
+- overheadTypeId (reference to OverheadType)
+- share (0..1, the proportion of this overhead type allocated to the employee)
 
 ## Calculations
 Employee annual base cost:
 annualBase = grossMonthly*12 + grossMonthly*12*oncostRate + annualBenefits + annualBonus
 
-Allocated overhead to employee:
-allocatedOverhead = mgmtPoolAnnual*mgmtShare + companyPoolAnnual*companyShare
+Allocated overhead to employee (monthly):
+For each OverheadAllocation for the employee:
+  overheadMonthly = overheadType.amount / (12 if period="annual", 1 if period="monthly", 4 if period="quarterly")
+  allocatedOverheadMonthly += overheadMonthly * share
+
+allocatedOverheadMonthly = sum(overheadMonthly * share for each allocated overhead type)
 
 Fully loaded annual:
-fullyLoadedAnnual = annualBase + allocatedOverhead
+allocatedOverheadAnnual = allocatedOverheadMonthly * 12
+fullyLoadedAnnual = annualBase + allocatedOverheadAnnual
 
 Fully loaded monthly:
 fullyLoadedMonthly = fullyLoadedAnnual / 12
+
+Get settings:
+devReleasableHoursPerMonth = Settings.get("devReleasableHoursPerMonth").value (as float)
+standardHoursPerMonth = Settings.get("standardHoursPerMonth").value (as float)
+qaRatio = Settings.get("qaRatio").value (as float)
+baRatio = Settings.get("baRatio").value (as float)
+margin = Settings.get("margin").value (as float)
+risk = Settings.get("risk").value (as float)
 
 DEV cost per releaseable hour for a stack S:
 devMonthlyCost(S) = sum(fullyLoadedMonthly of DEV in stack S)
@@ -76,6 +98,6 @@ finalPrice(S) = releaseableCost(S) * (1 + margin) * (1 + risk)
 ## Pages (MVP)
 - /stacks (CRUD)
 - /employees (CRUD)
-- /overheads (edit pools + allocation table per employee)
-- /assumptions (edit assumptions)
+- /overheads (CRUD for OverheadType, allocation table per employee with overheadTypeId and share)
+- /settings (edit settings by group, key-value editor)
 - /results (per-stack: dev rate, QA rate, BA rate, releaseable cost, final price + explain breakdown)

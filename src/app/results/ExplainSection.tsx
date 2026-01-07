@@ -6,8 +6,8 @@ import {
   calculateAllocatedOverhead,
   calculateFullyLoadedMonthly,
   type Employee,
-  type OverheadPool,
-  type Assumptions,
+  type OverheadType,
+  type Settings,
 } from "@/lib/pricing";
 
 interface ExplainSectionProps {
@@ -21,8 +21,8 @@ interface ExplainSectionProps {
     finalPrice: number | null;
   };
   employees: Employee[];
-  overheadPool: OverheadPool;
-  assumptions: Assumptions;
+  overheadTypes: OverheadType[];
+  settings: Settings;
   qaCostPerDevRelHour: number;
   baCostPerDevRelHour: number;
 }
@@ -32,8 +32,8 @@ export function ExplainSection({
   stackId,
   result,
   employees,
-  overheadPool,
-  assumptions,
+  overheadTypes,
+  settings,
   qaCostPerDevRelHour,
   baCostPerDevRelHour,
 }: ExplainSectionProps) {
@@ -48,6 +48,16 @@ export function ExplainSection({
   const formatCurrency = (value: number) => {
     return `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
+
+  // Get settings with defaults
+  const devReleasableHoursPerMonth = settings.dev_releasable_hours_per_month ?? 100;
+  const standardHoursPerMonth = settings.standard_hours_per_month ?? 160;
+  const qaRatio = settings.qa_ratio ?? 0.5;
+  const baRatio = settings.ba_ratio ?? 0.25;
+  const margin = settings.margin ?? 0.2;
+  const risk = settings.risk ?? 0.1;
+  const exchangeRatio = settings.exchange_ratio ?? null;
+  const currency = exchangeRatio && exchangeRatio > 0 ? "USD" : "EGP";
 
   if (!isExpanded) {
     return (
@@ -72,10 +82,10 @@ export function ExplainSection({
 
   // Calculate intermediate values for DEV employees
   const devCalculations = devEmployees.map((emp) => {
-    const annualBase = calculateAnnualBase(emp);
-    const allocatedOverhead = calculateAllocatedOverhead(emp, overheadPool);
+    const annualBase = calculateAnnualBase(emp, exchangeRatio);
+    const allocatedOverhead = calculateAllocatedOverhead(emp, overheadTypes, exchangeRatio);
     const fullyLoadedAnnual = annualBase + allocatedOverhead;
-    const fullyLoadedMonthly = calculateFullyLoadedMonthly(emp, overheadPool);
+    const fullyLoadedMonthly = calculateFullyLoadedMonthly(emp, overheadTypes, exchangeRatio);
     return {
       employee: emp,
       annualBase,
@@ -90,14 +100,14 @@ export function ExplainSection({
     0
   );
   const totalDevFte = devEmployees.reduce((sum, emp) => sum + emp.fte, 0);
-  const devHoursCapacity = assumptions.devReleasableHoursPerMonth * totalDevFte;
+  const devHoursCapacity = devReleasableHoursPerMonth * totalDevFte;
 
   // Calculate QA intermediate values
   const qaCalculations = qaEmployees.map((emp) => {
-    const annualBase = calculateAnnualBase(emp);
-    const allocatedOverhead = calculateAllocatedOverhead(emp, overheadPool);
+    const annualBase = calculateAnnualBase(emp, exchangeRatio);
+    const allocatedOverhead = calculateAllocatedOverhead(emp, overheadTypes, exchangeRatio);
     const fullyLoadedAnnual = annualBase + allocatedOverhead;
-    const fullyLoadedMonthly = calculateFullyLoadedMonthly(emp, overheadPool);
+    const fullyLoadedMonthly = calculateFullyLoadedMonthly(emp, overheadTypes, exchangeRatio);
     return {
       employee: emp,
       annualBase,
@@ -111,14 +121,14 @@ export function ExplainSection({
     (sum, calc) => sum + calc.fullyLoadedMonthly,
     0
   );
-  const qaCostPerQaHour = qaMonthlyCost / assumptions.standardHoursPerMonth;
+  const qaCostPerQaHour = qaMonthlyCost / standardHoursPerMonth;
 
   // Calculate BA intermediate values
   const baCalculations = baEmployees.map((emp) => {
-    const annualBase = calculateAnnualBase(emp);
-    const allocatedOverhead = calculateAllocatedOverhead(emp, overheadPool);
+    const annualBase = calculateAnnualBase(emp, exchangeRatio);
+    const allocatedOverhead = calculateAllocatedOverhead(emp, overheadTypes, exchangeRatio);
     const fullyLoadedAnnual = annualBase + allocatedOverhead;
-    const fullyLoadedMonthly = calculateFullyLoadedMonthly(emp, overheadPool);
+    const fullyLoadedMonthly = calculateFullyLoadedMonthly(emp, overheadTypes, exchangeRatio);
     return {
       employee: emp,
       annualBase,
@@ -132,7 +142,7 @@ export function ExplainSection({
     (sum, calc) => sum + calc.fullyLoadedMonthly,
     0
   );
-  const baCostPerBaHour = baMonthlyCost / assumptions.standardHoursPerMonth;
+  const baCostPerBaHour = baMonthlyCost / standardHoursPerMonth;
 
   return (
     <div
@@ -145,7 +155,7 @@ export function ExplainSection({
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-        <h4 style={{ margin: 0 }}>Calculation Breakdown</h4>
+        <h4 style={{ margin: 0 }}>Calculation Breakdown {exchangeRatio && exchangeRatio > 0 && `(in ${currency})`}</h4>
         <button
           onClick={() => setIsExpanded(false)}
           style={{
@@ -169,7 +179,7 @@ export function ExplainSection({
         ) : (
           <>
             <div style={{ marginBottom: "0.5rem", fontSize: "0.9rem" }}>
-              <strong>Monthly Cost:</strong> {formatCurrency(devMonthlyCost)}
+              <strong>Monthly Cost:</strong> {formatCurrency(devMonthlyCost)} {currency}
             </div>
             <div style={{ marginBottom: "0.5rem", fontSize: "0.9rem" }}>
               <strong>Total FTE:</strong> {totalDevFte.toFixed(2)}
@@ -177,11 +187,11 @@ export function ExplainSection({
             <div style={{ marginBottom: "0.5rem", fontSize: "0.9rem" }}>
               <strong>Hours Capacity:</strong> {devHoursCapacity.toFixed(0)} hours/month
               <span style={{ color: "#666", marginLeft: "0.5rem" }}>
-                ({assumptions.devReleasableHoursPerMonth} × {totalDevFte.toFixed(2)})
+                ({devReleasableHoursPerMonth} × {totalDevFte.toFixed(2)})
               </span>
             </div>
             <div style={{ marginBottom: "0.5rem", fontSize: "0.9rem" }}>
-              <strong>Cost per Releaseable Hour:</strong> {formatCurrency(result.devCostPerRelHour ?? 0)}
+              <strong>Cost per Releaseable Hour:</strong> {formatCurrency(result.devCostPerRelHour ?? 0)} {currency}
               <span style={{ color: "#666", marginLeft: "0.5rem" }}>
                 ({formatCurrency(devMonthlyCost)} ÷ {devHoursCapacity.toFixed(0)})
               </span>
@@ -204,9 +214,9 @@ export function ExplainSection({
                   >
                     <strong>{calc.employee.name}</strong>
                     <div style={{ marginTop: "0.25rem", color: "#666" }}>
-                      Annual Base: {formatCurrency(calc.annualBase)} | Allocated Overhead:{" "}
-                      {formatCurrency(calc.allocatedOverhead)} | Fully Loaded Monthly:{" "}
-                      {formatCurrency(calc.fullyLoadedMonthly)}
+                      Annual Base: {formatCurrency(calc.annualBase)} {currency} | Allocated Overhead:{" "}
+                      {formatCurrency(calc.allocatedOverhead)} {currency} | Fully Loaded Monthly:{" "}
+                      {formatCurrency(calc.fullyLoadedMonthly)} {currency}
                     </div>
                   </div>
                 ))}
@@ -224,21 +234,21 @@ export function ExplainSection({
         ) : (
           <>
             <div style={{ marginBottom: "0.5rem", fontSize: "0.9rem" }}>
-              <strong>Monthly Cost:</strong> {formatCurrency(qaMonthlyCost)}
+              <strong>Monthly Cost:</strong> {formatCurrency(qaMonthlyCost)} {currency}
             </div>
             <div style={{ marginBottom: "0.5rem", fontSize: "0.9rem" }}>
-              <strong>Cost per QA Hour:</strong> {formatCurrency(qaCostPerQaHour)}
+              <strong>Cost per QA Hour:</strong> {formatCurrency(qaCostPerQaHour)} {currency}
               <span style={{ color: "#666", marginLeft: "0.5rem" }}>
-                ({formatCurrency(qaMonthlyCost)} ÷ {assumptions.standardHoursPerMonth})
+                ({formatCurrency(qaMonthlyCost)} ÷ {standardHoursPerMonth})
               </span>
             </div>
             <div style={{ marginBottom: "0.5rem", fontSize: "0.9rem" }}>
-              <strong>QA Ratio:</strong> {assumptions.qaRatio} ({assumptions.qaRatio * 100}%)
+              <strong>QA Ratio:</strong> {qaRatio} ({qaRatio * 100}%)
             </div>
             <div style={{ marginBottom: "0.5rem", fontSize: "0.9rem" }}>
-              <strong>Cost per Dev Releaseable Hour:</strong> {formatCurrency(qaCostPerDevRelHour)}
+              <strong>Cost per Dev Releaseable Hour:</strong> {formatCurrency(qaCostPerDevRelHour)} {currency}
               <span style={{ color: "#666", marginLeft: "0.5rem" }}>
-                ({formatCurrency(qaCostPerQaHour)} × {assumptions.qaRatio})
+                ({formatCurrency(qaCostPerQaHour)} × {qaRatio})
               </span>
             </div>
           </>
@@ -253,21 +263,21 @@ export function ExplainSection({
         ) : (
           <>
             <div style={{ marginBottom: "0.5rem", fontSize: "0.9rem" }}>
-              <strong>Monthly Cost:</strong> {formatCurrency(baMonthlyCost)}
+              <strong>Monthly Cost:</strong> {formatCurrency(baMonthlyCost)} {currency}
             </div>
             <div style={{ marginBottom: "0.5rem", fontSize: "0.9rem" }}>
-              <strong>Cost per BA Hour:</strong> {formatCurrency(baCostPerBaHour)}
+              <strong>Cost per BA Hour:</strong> {formatCurrency(baCostPerBaHour)} {currency}
               <span style={{ color: "#666", marginLeft: "0.5rem" }}>
-                ({formatCurrency(baMonthlyCost)} ÷ {assumptions.standardHoursPerMonth})
+                ({formatCurrency(baMonthlyCost)} ÷ {standardHoursPerMonth})
               </span>
             </div>
             <div style={{ marginBottom: "0.5rem", fontSize: "0.9rem" }}>
-              <strong>BA Ratio:</strong> {assumptions.baRatio} ({assumptions.baRatio * 100}%)
+              <strong>BA Ratio:</strong> {baRatio} ({baRatio * 100}%)
             </div>
             <div style={{ marginBottom: "0.5rem", fontSize: "0.9rem" }}>
-              <strong>Cost per Dev Releaseable Hour:</strong> {formatCurrency(baCostPerDevRelHour)}
+              <strong>Cost per Dev Releaseable Hour:</strong> {formatCurrency(baCostPerDevRelHour)} {currency}
               <span style={{ color: "#666", marginLeft: "0.5rem" }}>
-                ({formatCurrency(baCostPerBaHour)} × {assumptions.baRatio})
+                ({formatCurrency(baCostPerBaHour)} × {baRatio})
               </span>
             </div>
           </>
@@ -279,21 +289,21 @@ export function ExplainSection({
         <h5 style={{ marginBottom: "0.75rem", color: "#666" }}>Final Price Calculation</h5>
         <div style={{ fontSize: "0.9rem", lineHeight: "1.6" }}>
           <div>
-            <strong>Releaseable Cost:</strong> {formatCurrency(result.releaseableCost ?? 0)}
+            <strong>Releaseable Cost:</strong> {formatCurrency(result.releaseableCost ?? 0)} {currency}
             <span style={{ color: "#666", marginLeft: "0.5rem" }}>
-              (DEV: {formatCurrency(result.devCostPerRelHour ?? 0)} + QA:{" "}
-              {formatCurrency(qaCostPerDevRelHour)} + BA: {formatCurrency(baCostPerDevRelHour)})
+              (DEV: {formatCurrency(result.devCostPerRelHour ?? 0)} {currency} + QA:{" "}
+              {formatCurrency(qaCostPerDevRelHour)} {currency} + BA: {formatCurrency(baCostPerDevRelHour)} {currency})
             </span>
           </div>
           <div style={{ marginTop: "0.5rem" }}>
-            <strong>Margin:</strong> {assumptions.margin * 100}% | <strong>Risk:</strong>{" "}
-            {assumptions.risk * 100}%
+            <strong>Margin:</strong> {margin * 100}% | <strong>Risk:</strong>{" "}
+            {risk * 100}%
           </div>
           <div style={{ marginTop: "0.5rem" }}>
-            <strong>Final Price:</strong> {formatCurrency(result.finalPrice ?? 0)}
+            <strong>Final Price:</strong> {formatCurrency(result.finalPrice ?? 0)} {currency}
             <span style={{ color: "#666", marginLeft: "0.5rem" }}>
-              ({formatCurrency(result.releaseableCost ?? 0)} × 1.{assumptions.margin * 100} × 1.
-              {assumptions.risk * 100})
+              ({formatCurrency(result.releaseableCost ?? 0)} {currency} × 1.{margin * 100} × 1.
+              {risk * 100})
             </span>
           </div>
         </div>
@@ -301,4 +311,3 @@ export function ExplainSection({
     </div>
   );
 }
-

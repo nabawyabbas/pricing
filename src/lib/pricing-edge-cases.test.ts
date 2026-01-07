@@ -6,21 +6,31 @@ import {
   calculateBaCostPerDevRelHour,
   calculateFullyLoadedMonthly,
   type Employee,
-  type OverheadPool,
-  type Assumptions,
+  type OverheadType,
+  type Settings,
 } from "./pricing";
 
 describe("pricing edge cases", () => {
-  const baseOverheadPool: OverheadPool = {
-    managementOverheadAnnual: 100000,
-    companyOverheadAnnual: 200000,
-  };
+  const baseOverheadTypes: OverheadType[] = [
+    {
+      id: "overhead-mgmt",
+      name: "Management",
+      amount: 100000,
+      period: "annual",
+    },
+    {
+      id: "overhead-company",
+      name: "Company",
+      amount: 200000,
+      period: "annual",
+    },
+  ];
 
-  const baseAssumptions: Assumptions = {
-    devReleasableHoursPerMonth: 100,
-    standardHoursPerMonth: 160,
-    qaRatio: 0.5,
-    baRatio: 0.25,
+  const baseSettings: Settings = {
+    dev_releasable_hours_per_month: 100,
+    standard_hours_per_month: 160,
+    qa_ratio: 0.5,
+    ba_ratio: 0.25,
     margin: 0.2,
     risk: 0.1,
   };
@@ -41,15 +51,18 @@ describe("pricing edge cases", () => {
     annualBenefits: 5000,
     annualBonus: 10000,
     fte,
-    overheadAlloc: hasOverheadAlloc
-      ? {
-          mgmtShare: 0.1,
-          companyShare: 0.2,
-        }
-      : null,
+    overheadAllocs: hasOverheadAlloc
+      ? [
+          { overheadTypeId: "overhead-mgmt", share: 0.1 },
+          { overheadTypeId: "overhead-company", share: 0.2 },
+        ]
+      : [],
   });
 
-  const createQaEmployee = (grossMonthly: number = 8000, hasOverheadAlloc: boolean = true): Employee => ({
+  const createQaEmployee = (
+    grossMonthly: number = 8000,
+    hasOverheadAlloc: boolean = true
+  ): Employee => ({
     id: "qa-1",
     name: "QA Employee",
     category: "QA",
@@ -60,15 +73,18 @@ describe("pricing edge cases", () => {
     annualBenefits: 5000,
     annualBonus: 5000,
     fte: 1.0,
-    overheadAlloc: hasOverheadAlloc
-      ? {
-          mgmtShare: 0.1,
-          companyShare: 0.2,
-        }
-      : null,
+    overheadAllocs: hasOverheadAlloc
+      ? [
+          { overheadTypeId: "overhead-mgmt", share: 0.1 },
+          { overheadTypeId: "overhead-company", share: 0.2 },
+        ]
+      : [],
   });
 
-  const createBaEmployee = (grossMonthly: number = 9000, hasOverheadAlloc: boolean = true): Employee => ({
+  const createBaEmployee = (
+    grossMonthly: number = 9000,
+    hasOverheadAlloc: boolean = true
+  ): Employee => ({
     id: "ba-1",
     name: "BA Employee",
     category: "BA",
@@ -79,22 +95,30 @@ describe("pricing edge cases", () => {
     annualBenefits: 5000,
     annualBonus: 5000,
     fte: 1.0,
-    overheadAlloc: hasOverheadAlloc
-      ? {
-          mgmtShare: 0.1,
-          companyShare: 0.2,
-        }
-      : null,
+    overheadAllocs: hasOverheadAlloc
+      ? [
+          { overheadTypeId: "overhead-mgmt", share: 0.1 },
+          { overheadTypeId: "overhead-company", share: 0.2 },
+        ]
+      : [],
   });
 
   describe("empty teams", () => {
     it("should handle empty QA team - returns 0 cost", () => {
-      const qaCost = calculateQaCostPerDevRelHour([], baseOverheadPool, baseAssumptions);
+      const qaCost = calculateQaCostPerDevRelHour(
+        [],
+        baseOverheadTypes,
+        baseSettings
+      );
       expect(qaCost).toBe(0);
     });
 
     it("should handle empty BA team - returns 0 cost", () => {
-      const baCost = calculateBaCostPerDevRelHour([], baseOverheadPool, baseAssumptions);
+      const baCost = calculateBaCostPerDevRelHour(
+        [],
+        baseOverheadTypes,
+        baseSettings
+      );
       expect(baCost).toBe(0);
     });
 
@@ -105,8 +129,8 @@ describe("pricing edge cases", () => {
       const result = calculatePricing(
         techStackId,
         [devEmployee],
-        baseOverheadPool,
-        baseAssumptions
+        baseOverheadTypes,
+        baseSettings
       );
 
       expect(result.qaCostPerDevRelHour).toBe(0);
@@ -120,7 +144,11 @@ describe("pricing edge cases", () => {
   describe("zero devs in a stack", () => {
     it("should return null for devCostPerRelHour when no DEV employees in stack", () => {
       const techStackId = "stack-1";
-      const cost = calculateDevCostPerRelHour([], baseOverheadPool, baseAssumptions);
+      const cost = calculateDevCostPerRelHour(
+        [],
+        baseOverheadTypes,
+        baseSettings
+      );
       expect(cost).toBeNull();
     });
 
@@ -132,8 +160,8 @@ describe("pricing edge cases", () => {
       const result = calculatePricing(
         techStackId,
         [qaEmployee, baEmployee],
-        baseOverheadPool,
-        baseAssumptions
+        baseOverheadTypes,
+        baseSettings
       );
 
       expect(result.devCostPerRelHour).toBeNull();
@@ -149,8 +177,8 @@ describe("pricing edge cases", () => {
       const result = calculatePricing(
         techStackId,
         [],
-        baseOverheadPool,
-        baseAssumptions
+        baseOverheadTypes,
+        baseSettings
       );
 
       expect(result.devCostPerRelHour).toBeNull();
@@ -162,13 +190,16 @@ describe("pricing edge cases", () => {
   });
 
   describe("missing overhead allocations", () => {
-    it("should handle employee with no overheadAlloc - returns 0 allocated overhead", () => {
+    it("should handle employee with no overheadAllocs - returns 0 allocated overhead", () => {
       const employee = createDevEmployee("stack-1", 10000, 1.0, false);
-      const monthlyCost = calculateFullyLoadedMonthly(employee, baseOverheadPool);
+      const monthlyCost = calculateFullyLoadedMonthly(
+        employee,
+        baseOverheadTypes
+      );
 
       // Should still calculate base cost, just no overhead
       expect(monthlyCost).toBeGreaterThan(0);
-      
+
       // Calculate what it should be without overhead
       const grossAnnual = employee.grossMonthly * 12;
       const oncostAmount = grossAnnual * (employee.oncostRate ?? 0);
@@ -180,40 +211,45 @@ describe("pricing edge cases", () => {
       expect(monthlyCost).toBeCloseTo(expectedMonthly, 2);
     });
 
-    it("should handle QA employee with no overheadAlloc", () => {
+    it("should handle QA employee with no overheadAllocs", () => {
       const qaEmployee = createQaEmployee(8000, false);
       const qaCost = calculateQaCostPerDevRelHour(
         [qaEmployee],
-        baseOverheadPool,
-        baseAssumptions
+        baseOverheadTypes,
+        baseSettings
       );
 
       // Should still calculate cost, just without overhead
       expect(qaCost).toBeGreaterThan(0);
     });
 
-    it("should handle BA employee with no overheadAlloc", () => {
+    it("should handle BA employee with no overheadAllocs", () => {
       const baEmployee = createBaEmployee(9000, false);
       const baCost = calculateBaCostPerDevRelHour(
         [baEmployee],
-        baseOverheadPool,
-        baseAssumptions
+        baseOverheadTypes,
+        baseSettings
       );
 
       // Should still calculate cost, just without overhead
       expect(baCost).toBeGreaterThan(0);
     });
 
-    it("should handle mixed employees - some with overheadAlloc, some without", () => {
+    it("should handle mixed employees - some with overheadAllocs, some without", () => {
       const techStackId = "stack-1";
       const devWithOverhead = createDevEmployee(techStackId, 10000, 1.0, true);
-      const devWithoutOverhead = createDevEmployee(techStackId, 12000, 1.0, false);
+      const devWithoutOverhead = createDevEmployee(
+        techStackId,
+        12000,
+        1.0,
+        false
+      );
 
       const result = calculatePricing(
         techStackId,
         [devWithOverhead, devWithoutOverhead],
-        baseOverheadPool,
-        baseAssumptions
+        baseOverheadTypes,
+        baseSettings
       );
 
       // Should calculate successfully
@@ -229,8 +265,8 @@ describe("pricing edge cases", () => {
       const result = calculatePricing(
         techStackId,
         [],
-        baseOverheadPool,
-        baseAssumptions
+        baseOverheadTypes,
+        baseSettings
       );
 
       expect(result.devCostPerRelHour).toBeNull();
@@ -248,8 +284,8 @@ describe("pricing edge cases", () => {
       const result = calculatePricing(
         techStackId,
         [qaEmployee, baEmployee],
-        baseOverheadPool,
-        baseAssumptions
+        baseOverheadTypes,
+        baseSettings
       );
 
       expect(result.devCostPerRelHour).toBeNull();
@@ -265,8 +301,8 @@ describe("pricing edge cases", () => {
       const result = calculatePricing(
         techStackId,
         [],
-        baseOverheadPool,
-        baseAssumptions
+        baseOverheadTypes,
+        baseSettings
       );
 
       expect(result.devCostPerRelHour).toBeNull();
@@ -277,4 +313,3 @@ describe("pricing edge cases", () => {
     });
   });
 });
-

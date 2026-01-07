@@ -15,96 +15,150 @@ function parseFloatValue(value: string | null): number | null {
   return isNaN(parsed) ? null : parsed;
 }
 
-export async function updateOverheadPool(formData: FormData) {
-  const managementOverheadAnnual = formData.get("managementOverheadAnnual") as string;
-  const companyOverheadAnnual = formData.get("companyOverheadAnnual") as string;
+// OverheadType CRUD
+export async function createOverheadType(formData: FormData) {
+  const name = formData.get("name") as string;
+  const amount = formData.get("amount") as string;
+  const period = formData.get("period") as string;
 
-  if (!managementOverheadAnnual || !companyOverheadAnnual) {
-    return { error: "Both overhead amounts are required" };
+  if (!name || !amount || !period) {
+    return { error: "Name, amount, and period are required" };
+  }
+
+  const validPeriods = ["annual", "monthly", "quarterly"];
+  if (!validPeriods.includes(period)) {
+    return { error: "Invalid period" };
+  }
+
+  const amountValue = parseDecimal(amount);
+  if (!amountValue || amountValue.lte(0)) {
+    return { error: "Amount must be greater than zero" };
   }
 
   try {
-    // Get or create the single OverheadPool
-    const existing = await db.overheadPool.findFirst();
-    
-    if (existing) {
-      await db.overheadPool.update({
-        where: { id: existing.id },
-        data: {
-          managementOverheadAnnual: new Prisma.Decimal(managementOverheadAnnual),
-          companyOverheadAnnual: new Prisma.Decimal(companyOverheadAnnual),
-        },
-      });
-    } else {
-      await db.overheadPool.create({
-        data: {
-          managementOverheadAnnual: new Prisma.Decimal(managementOverheadAnnual),
-          companyOverheadAnnual: new Prisma.Decimal(companyOverheadAnnual),
-        },
-      });
-    }
-    
+    await db.overheadType.create({
+      data: {
+        name: name.trim(),
+        amount: amountValue,
+        period: period as any,
+      },
+    });
+
     revalidatePath("/overheads");
     return { success: true };
   } catch (error: any) {
-    return { error: "Failed to update overhead pool" };
+    return { error: "Failed to create overhead type" };
   }
 }
 
-export async function updateOverheadAllocation(formData: FormData) {
-  const employeeId = formData.get("employeeId") as string;
-  const mgmtShare = formData.get("mgmtShare") as string;
-  const companyShare = formData.get("companyShare") as string;
+export async function updateOverheadType(formData: FormData) {
+  const id = formData.get("id") as string;
+  const name = formData.get("name") as string;
+  const amount = formData.get("amount") as string;
+  const period = formData.get("period") as string;
 
-  if (!employeeId) {
-    return { error: "Employee ID is required" };
+  if (!id || !name || !amount || !period) {
+    return { error: "ID, name, amount, and period are required" };
   }
 
-  const mgmtShareValue = parseFloatValue(mgmtShare);
-  const companyShareValue = parseFloatValue(companyShare);
-
-  if (mgmtShareValue === null || companyShareValue === null) {
-    return { error: "Both shares are required" };
+  const validPeriods = ["annual", "monthly", "quarterly"];
+  if (!validPeriods.includes(period)) {
+    return { error: "Invalid period" };
   }
 
-  if (mgmtShareValue < 0 || companyShareValue < 0) {
-    return { error: "Shares cannot be negative" };
+  const amountValue = parseDecimal(amount);
+  if (!amountValue || amountValue.lte(0)) {
+    return { error: "Amount must be greater than zero" };
   }
 
   try {
-    const existing = await db.overheadAllocation.findUnique({
-      where: { employeeId },
+    await db.overheadType.update({
+      where: { id },
+      data: {
+        name: name.trim(),
+        amount: amountValue,
+        period: period as any,
+      },
     });
 
-    if (existing) {
-      await db.overheadAllocation.update({
-        where: { employeeId },
-        data: {
-          mgmtShare: mgmtShareValue,
-          companyShare: companyShareValue,
-        },
-      });
-    } else {
-      await db.overheadAllocation.create({
-        data: {
-          employeeId,
-          mgmtShare: mgmtShareValue,
-          companyShare: companyShareValue,
-        },
-      });
+    revalidatePath("/overheads");
+    return { success: true };
+  } catch (error: any) {
+    if (error.code === "P2025") {
+      return { error: "Overhead type not found" };
     }
+    return { error: "Failed to update overhead type" };
+  }
+}
+
+export async function deleteOverheadType(overheadTypeId: string) {
+  try {
+    await db.overheadType.delete({
+      where: { id: overheadTypeId },
+    });
+
+    revalidatePath("/overheads");
+    return { success: true };
+  } catch (error: any) {
+    if (error.code === "P2025") {
+      return { error: "Overhead type not found" };
+    }
+    if (error.code === "P2003") {
+      return { error: "Cannot delete: overhead type has allocations" };
+    }
+    return { error: "Failed to delete overhead type" };
+  }
+}
+
+// OverheadAllocation CRUD
+export async function updateOverheadAllocation(formData: FormData) {
+  const employeeId = formData.get("employeeId") as string;
+  const overheadTypeId = formData.get("overheadTypeId") as string;
+  const share = formData.get("share") as string;
+
+  if (!employeeId || !overheadTypeId) {
+    return { error: "Employee ID and overhead type ID are required" };
+  }
+
+  const shareValue = parseFloatValue(share);
+  if (shareValue === null) {
+    return { error: "Share is required" };
+  }
+
+  if (shareValue < 0) {
+    return { error: "Share cannot be negative" };
+  }
+
+  try {
+    await db.overheadAllocation.upsert({
+      where: {
+        employeeId_overheadTypeId: {
+          employeeId,
+          overheadTypeId,
+        },
+      },
+      create: {
+        employeeId,
+        overheadTypeId,
+        share: shareValue,
+      },
+      update: {
+        share: shareValue,
+      },
+    });
 
     revalidatePath("/overheads");
     return { success: true };
   } catch (error: any) {
     if (error.code === "P2003") {
-      return { error: "Employee not found" };
+      return { error: "Employee or overhead type not found" };
     }
     return { error: "Failed to update overhead allocation" };
   }
 }
 
-export async function allocateEqually() {
+// Allocation helpers per overhead type
+export async function allocateEqually(overheadTypeId: string) {
   try {
     const employees = await db.employee.findMany();
     const count = employees.length;
@@ -118,15 +172,19 @@ export async function allocateEqually() {
     await db.$transaction(
       employees.map((emp) =>
         db.overheadAllocation.upsert({
-          where: { employeeId: emp.id },
+          where: {
+            employeeId_overheadTypeId: {
+              employeeId: emp.id,
+              overheadTypeId,
+            },
+          },
           create: {
             employeeId: emp.id,
-            mgmtShare: share,
-            companyShare: share,
+            overheadTypeId,
+            share,
           },
           update: {
-            mgmtShare: share,
-            companyShare: share,
+            share,
           },
         })
       )
@@ -139,13 +197,9 @@ export async function allocateEqually() {
   }
 }
 
-export async function allocateProportionalToGross() {
+export async function allocateProportionalToGross(overheadTypeId: string) {
   try {
-    const employees = await db.employee.findMany({
-      include: {
-        overheadAlloc: true,
-      },
-    });
+    const employees = await db.employee.findMany();
 
     if (employees.length === 0) {
       return { error: "No employees found" };
@@ -164,15 +218,19 @@ export async function allocateProportionalToGross() {
       employees.map((emp) => {
         const share = Number(emp.grossMonthly) / totalGross;
         return db.overheadAllocation.upsert({
-          where: { employeeId: emp.id },
+          where: {
+            employeeId_overheadTypeId: {
+              employeeId: emp.id,
+              overheadTypeId,
+            },
+          },
           create: {
             employeeId: emp.id,
-            mgmtShare: share,
-            companyShare: share,
+            overheadTypeId,
+            share,
           },
           update: {
-            mgmtShare: share,
-            companyShare: share,
+            share,
           },
         });
       })
@@ -185,33 +243,31 @@ export async function allocateProportionalToGross() {
   }
 }
 
-export async function normalizeTo100Percent() {
+export async function normalizeTo100Percent(overheadTypeId: string) {
   try {
-    const allocations = await db.overheadAllocation.findMany();
+    const allocations = await db.overheadAllocation.findMany({
+      where: { overheadTypeId },
+    });
 
     if (allocations.length === 0) {
-      return { error: "No allocations found" };
+      return { error: "No allocations found for this overhead type" };
     }
 
-    // Calculate totals
-    const totalMgmt = allocations.reduce((sum, alloc) => sum + alloc.mgmtShare, 0);
-    const totalCompany = allocations.reduce((sum, alloc) => sum + alloc.companyShare, 0);
+    // Calculate total
+    const total = allocations.reduce((sum, alloc) => sum + alloc.share, 0);
 
-    if (totalMgmt === 0 && totalCompany === 0) {
+    if (total === 0) {
       return { error: "All shares are zero" };
     }
 
     // Normalize each allocation
     await db.$transaction(
       allocations.map((alloc) => {
-        const normalizedMgmt = totalMgmt > 0 ? alloc.mgmtShare / totalMgmt : 0;
-        const normalizedCompany = totalCompany > 0 ? alloc.companyShare / totalCompany : 0;
-
+        const normalizedShare = alloc.share / total;
         return db.overheadAllocation.update({
           where: { id: alloc.id },
           data: {
-            mgmtShare: normalizedMgmt,
-            companyShare: normalizedCompany,
+            share: normalizedShare,
           },
         });
       })
@@ -223,4 +279,3 @@ export async function normalizeTo100Percent() {
     return { error: "Failed to normalize allocations" };
   }
 }
-

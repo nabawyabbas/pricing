@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import {
-  calculatePricing,
+  calculatePricingForCategory,
   calculateQaCostPerDevRelHour,
   calculateBaCostPerDevRelHour,
   type Employee as PricingEmployee,
@@ -99,7 +99,7 @@ function convertEmployee(
   return {
     id: emp.id,
     name: emp.name,
-    category: emp.category as "DEV" | "QA" | "BA",
+    category: emp.category as "DEV" | "QA" | "BA" | "AGENTIC_AI",
     techStackId: emp.techStackId,
     grossMonthly: Number(emp.grossMonthly),
     netMonthly: Number(emp.netMonthly),
@@ -184,13 +184,50 @@ export default async function ResultsPage() {
     settings
   );
 
-  // Calculate pricing for each tech stack - only active employees
-  const stackResults = techStacks.map((stack) => {
-    const result = calculatePricing(stack.id, pricingEmployees, overheadTypes, settings);
-    return {
-      stack,
-      result,
-    };
+  // Calculate pricing for each tech stack - separate rows for DEV and AGENTIC_AI
+  const stackResults = techStacks.flatMap((stack) => {
+    const devEmployees = pricingEmployees.filter(
+      (emp) => emp.category === "DEV" && emp.techStackId === stack.id
+    );
+    const agenticAiEmployees = pricingEmployees.filter(
+      (emp) => emp.category === "AGENTIC_AI" && emp.techStackId === stack.id
+    );
+
+    const results = [];
+
+    // Add DEV pricing row if there are DEV employees
+    if (devEmployees.length > 0) {
+      const devResult = calculatePricingForCategory(
+        "DEV",
+        stack.id,
+        pricingEmployees,
+        overheadTypes,
+        settings
+      );
+      results.push({
+        stack,
+        category: "DEV" as const,
+        result: devResult,
+      });
+    }
+
+    // Add AGENTIC_AI pricing row if there are AGENTIC_AI employees
+    if (agenticAiEmployees.length > 0) {
+      const agenticAiResult = calculatePricingForCategory(
+        "AGENTIC_AI",
+        stack.id,
+        pricingEmployees,
+        overheadTypes,
+        settings
+      );
+      results.push({
+        stack,
+        category: "AGENTIC_AI" as const,
+        result: agenticAiResult,
+      });
+    }
+
+    return results;
   });
 
   return (
@@ -258,17 +295,18 @@ export default async function ResultsPage() {
             <Card>
               <CardContent className="pt-6">
                 <p className="text-muted-foreground italic">
-                  No tech stacks found. Create tech stacks and assign DEV employees to view results.
+                  No tech stacks found. Create tech stacks and assign DEV or AGENTIC_AI employees to view results.
                 </p>
               </CardContent>
             </Card>
           ) : (
             <div className="space-y-4">
-              {stackResults.map(({ stack, result }) => (
+              {stackResults.map(({ stack, category, result }) => (
                 <StackResultCard
-                  key={stack.id}
+                  key={`${stack.id}-${category}`}
                   stackName={stack.name}
                   stackId={stack.id}
+                  category={category}
                   result={result}
                   employees={pricingEmployees}
                   overheadTypes={overheadTypes}
@@ -289,6 +327,7 @@ export default async function ResultsPage() {
 function StackResultCard({
   stackName,
   stackId,
+  category,
   result,
   employees,
   overheadTypes,
@@ -299,6 +338,7 @@ function StackResultCard({
 }: {
   stackName: string;
   stackId: string;
+  category: "DEV" | "AGENTIC_AI";
   result: {
     devCostPerRelHour: number | null;
     qaCostPerDevRelHour: number;
@@ -313,22 +353,25 @@ function StackResultCard({
   baCostPerDevRelHour: number;
   currency: Currency;
 }) {
+  const categoryLabel = category === "DEV" ? "DEV" : "Agentic AI";
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{stackName}</CardTitle>
+        <CardTitle>
+          {stackName} - {categoryLabel}
+        </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         {result.devCostPerRelHour === null ? (
           <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-md text-yellow-800">
-            No active DEV employees assigned to this tech stack.
+            No active {categoryLabel} employees assigned to this tech stack.
           </div>
         ) : (
           <>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <div className="text-sm text-muted-foreground mb-1">
-                  Dev Cost per Releaseable Hour
+                  {categoryLabel} Cost per Releaseable Hour
                 </div>
                 <div className="text-xl font-semibold">
                   {formatMoney(result.devCostPerRelHour, currency)}
@@ -353,6 +396,7 @@ function StackResultCard({
             <ExplainSection
               stackName={stackName}
               stackId={stackId}
+              category={category}
               result={result}
               employees={employees}
               overheadTypes={overheadTypes}

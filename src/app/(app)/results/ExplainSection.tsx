@@ -22,6 +22,7 @@ import { formatMoney, formatPercent, formatNumber, formatNumberLocale, type Curr
 interface ExplainSectionProps {
   stackName: string;
   stackId: string;
+  category: "DEV" | "AGENTIC_AI";
   result: {
     devCostPerRelHour: number | null;
     qaCostPerDevRelHour: number;
@@ -40,6 +41,7 @@ interface ExplainSectionProps {
 export function ExplainSection({
   stackName,
   stackId,
+  category,
   result,
   employees,
   overheadTypes,
@@ -50,8 +52,8 @@ export function ExplainSection({
 }: ExplainSectionProps) {
   const [isOpen, setIsOpen] = useState(false);
 
-  const devEmployees = employees.filter(
-    (emp) => emp.category === "DEV" && emp.techStackId === stackId
+  const categoryEmployees = employees.filter(
+    (emp) => emp.category === category && emp.techStackId === stackId
   );
   const qaEmployees = employees.filter((emp) => emp.category === "QA");
   const baEmployees = employees.filter((emp) => emp.category === "BA");
@@ -65,8 +67,8 @@ export function ExplainSection({
   const risk = settings.risk ?? 0.1;
   const exchangeRatio = getExchangeRatio(settings);
 
-  // Calculate intermediate values for DEV employees
-  const devCalculations = devEmployees.map((emp) => {
+  // Calculate intermediate values for category employees
+  const categoryCalculations = categoryEmployees.map((emp) => {
     const annualBase = calculateAnnualBase(emp, exchangeRatio);
     const allocatedOverhead = calculateAllocatedOverhead(emp, overheadTypes, exchangeRatio);
     const fullyLoadedAnnual = annualBase + allocatedOverhead;
@@ -80,12 +82,12 @@ export function ExplainSection({
     };
   });
 
-  const devMonthlyCost = devCalculations.reduce(
+  const categoryMonthlyCost = categoryCalculations.reduce(
     (sum, calc) => sum + calc.fullyLoadedMonthly,
     0
   );
-  const totalDevFte = devEmployees.reduce((sum, emp) => sum + emp.fte, 0);
-  const devHoursCapacity = devReleasableHoursPerMonth * totalDevFte;
+  const totalCategoryFte = categoryEmployees.reduce((sum, emp) => sum + emp.fte, 0);
+  const categoryHoursCapacity = devReleasableHoursPerMonth * totalCategoryFte;
 
   // Calculate QA intermediate values
   const qaCalculations = qaEmployees.map((emp) => {
@@ -141,29 +143,31 @@ export function ExplainSection({
             <div>
               <h4 className="font-semibold mb-3 text-muted-foreground">Calculation Breakdown ({currency})</h4>
 
-              {/* DEV Calculations */}
+              {/* Category Calculations */}
               <div className="mb-6">
-                <h5 className="font-medium mb-3 text-muted-foreground">DEV Team ({stackName})</h5>
-                {devCalculations.length === 0 ? (
-                  <p className="text-muted-foreground italic">No DEV employees</p>
+                <h5 className="font-medium mb-3 text-muted-foreground">
+                  {category === "DEV" ? "DEV" : "Agentic AI"} Team ({stackName})
+                </h5>
+                {categoryCalculations.length === 0 ? (
+                  <p className="text-muted-foreground italic">No {category === "DEV" ? "DEV" : "Agentic AI"} employees</p>
                 ) : (
                   <div className="space-y-2 text-sm">
                     <div>
-                      <strong>Monthly Cost:</strong> {formatMoney(devMonthlyCost, currency)}
+                      <strong>Monthly Cost:</strong> {formatMoney(categoryMonthlyCost, currency)}
                     </div>
                     <div>
-                      <strong>Total FTE:</strong> {formatNumber(totalDevFte, 2)}
+                      <strong>Total FTE:</strong> {formatNumber(totalCategoryFte, 2)}
                     </div>
                     <div>
-                      <strong>Hours Capacity:</strong> {formatNumberLocale(devHoursCapacity, 0)} hours/month
+                      <strong>Hours Capacity:</strong> {formatNumberLocale(categoryHoursCapacity, 0)} hours/month
                       <span className="text-muted-foreground ml-2">
-                        ({devReleasableHoursPerMonth} × {formatNumber(totalDevFte, 2)})
+                        ({devReleasableHoursPerMonth} × {formatNumber(totalCategoryFte, 2)})
                       </span>
                     </div>
                     <div>
                       <strong>Cost per Releaseable Hour:</strong> {formatMoney(result.devCostPerRelHour ?? 0, currency)}
                       <span className="text-muted-foreground ml-2">
-                        ({formatMoney(devMonthlyCost, currency)} ÷ {formatNumberLocale(devHoursCapacity, 0)})
+                        ({formatMoney(categoryMonthlyCost, currency)} ÷ {formatNumberLocale(categoryHoursCapacity, 0)})
                       </span>
                     </div>
                     <details className="mt-2">
@@ -171,7 +175,7 @@ export function ExplainSection({
                         Show employee details
                       </summary>
                       <div className="mt-2 pl-4 space-y-2">
-                        {devCalculations.map((calc) => (
+                        {categoryCalculations.map((calc) => (
                           <div
                             key={calc.employee.id}
                             className="p-2 bg-muted rounded text-xs"
@@ -190,63 +194,67 @@ export function ExplainSection({
                 )}
               </div>
 
-              {/* QA Calculations */}
-              <div className="mb-6">
-                <h5 className="font-medium mb-3 text-muted-foreground">QA Team</h5>
-                {qaCalculations.length === 0 ? (
-                  <p className="text-muted-foreground italic">No QA employees</p>
-                ) : (
-                  <div className="space-y-2 text-sm">
-                    <div>
-                      <strong>Monthly Cost:</strong> {formatMoney(qaMonthlyCost, currency)}
+              {/* QA Calculations - Only for DEV */}
+              {category === "DEV" && (
+                <div className="mb-6">
+                  <h5 className="font-medium mb-3 text-muted-foreground">QA Team</h5>
+                  {qaCalculations.length === 0 ? (
+                    <p className="text-muted-foreground italic">No QA employees</p>
+                  ) : (
+                    <div className="space-y-2 text-sm">
+                      <div>
+                        <strong>Monthly Cost:</strong> {formatMoney(qaMonthlyCost, currency)}
+                      </div>
+                      <div>
+                        <strong>Cost per QA Hour:</strong> {formatMoney(qaCostPerQaHour, currency)}
+                        <span className="text-muted-foreground ml-2">
+                          ({formatMoney(qaMonthlyCost, currency)} ÷ {standardHoursPerMonth})
+                        </span>
+                      </div>
+                      <div>
+                        <strong>QA Ratio:</strong> {formatPercent(qaRatio, "decimal")}
+                      </div>
+                      <div>
+                        <strong>Cost per Dev Releaseable Hour:</strong> {formatMoney(qaCostPerDevRelHour, currency)}
+                        <span className="text-muted-foreground ml-2">
+                          ({formatMoney(qaCostPerQaHour, currency)} × {qaRatio})
+                        </span>
+                      </div>
                     </div>
-                    <div>
-                      <strong>Cost per QA Hour:</strong> {formatMoney(qaCostPerQaHour, currency)}
-                      <span className="text-muted-foreground ml-2">
-                        ({formatMoney(qaMonthlyCost, currency)} ÷ {standardHoursPerMonth})
-                      </span>
-                    </div>
-                    <div>
-                      <strong>QA Ratio:</strong> {formatPercent(qaRatio, "decimal")}
-                    </div>
-                    <div>
-                      <strong>Cost per Dev Releaseable Hour:</strong> {formatMoney(qaCostPerDevRelHour, currency)}
-                      <span className="text-muted-foreground ml-2">
-                        ({formatMoney(qaCostPerQaHour, currency)} × {qaRatio})
-                      </span>
-                    </div>
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
+              )}
 
-              {/* BA Calculations */}
-              <div className="mb-6">
-                <h5 className="font-medium mb-3 text-muted-foreground">BA Team</h5>
-                {baCalculations.length === 0 ? (
-                  <p className="text-muted-foreground italic">No BA employees</p>
-                ) : (
-                  <div className="space-y-2 text-sm">
-                    <div>
-                      <strong>Monthly Cost:</strong> {formatMoney(baMonthlyCost, currency)}
+              {/* BA Calculations - Only for DEV */}
+              {category === "DEV" && (
+                <div className="mb-6">
+                  <h5 className="font-medium mb-3 text-muted-foreground">BA Team</h5>
+                  {baCalculations.length === 0 ? (
+                    <p className="text-muted-foreground italic">No BA employees</p>
+                  ) : (
+                    <div className="space-y-2 text-sm">
+                      <div>
+                        <strong>Monthly Cost:</strong> {formatMoney(baMonthlyCost, currency)}
+                      </div>
+                      <div>
+                        <strong>Cost per BA Hour:</strong> {formatMoney(baCostPerBaHour, currency)}
+                        <span className="text-muted-foreground ml-2">
+                          ({formatMoney(baMonthlyCost, currency)} ÷ {standardHoursPerMonth})
+                        </span>
+                      </div>
+                      <div>
+                        <strong>BA Ratio:</strong> {formatPercent(baRatio, "decimal")}
+                      </div>
+                      <div>
+                        <strong>Cost per Dev Releaseable Hour:</strong> {formatMoney(baCostPerDevRelHour, currency)}
+                        <span className="text-muted-foreground ml-2">
+                          ({formatMoney(baCostPerBaHour, currency)} × {baRatio})
+                        </span>
+                      </div>
                     </div>
-                    <div>
-                      <strong>Cost per BA Hour:</strong> {formatMoney(baCostPerBaHour, currency)}
-                      <span className="text-muted-foreground ml-2">
-                        ({formatMoney(baMonthlyCost, currency)} ÷ {standardHoursPerMonth})
-                      </span>
-                    </div>
-                    <div>
-                      <strong>BA Ratio:</strong> {formatPercent(baRatio, "decimal")}
-                    </div>
-                    <div>
-                      <strong>Cost per Dev Releaseable Hour:</strong> {formatMoney(baCostPerDevRelHour, currency)}
-                      <span className="text-muted-foreground ml-2">
-                        ({formatMoney(baCostPerBaHour, currency)} × {baRatio})
-                      </span>
-                    </div>
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
+              )}
 
               {/* Final Calculations */}
               <div className="p-3 bg-muted rounded">
@@ -255,8 +263,11 @@ export function ExplainSection({
                   <div>
                     <strong>Releaseable Cost:</strong> {formatMoney(result.releaseableCost ?? 0, currency)}
                     <span className="text-muted-foreground ml-2">
-                      (DEV: {formatMoney(result.devCostPerRelHour ?? 0, currency)} + QA:{" "}
-                      {formatMoney(qaCostPerDevRelHour, currency)} + BA: {formatMoney(baCostPerDevRelHour, currency)})
+                      ({category === "DEV" ? "DEV" : "Agentic AI"}: {formatMoney(result.devCostPerRelHour ?? 0, currency)}
+                      {category === "DEV" && (
+                        <> + QA: {formatMoney(qaCostPerDevRelHour, currency)} + BA: {formatMoney(baCostPerDevRelHour, currency)}</>
+                      )}
+                      )
                     </span>
                   </div>
                   <div>

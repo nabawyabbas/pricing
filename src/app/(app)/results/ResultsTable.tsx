@@ -18,6 +18,7 @@ import { formatMoney, type Currency } from "@/lib/format";
 interface ResultsTableProps {
   stackResults: Array<{
     stack: { id: string; name: string };
+    category: "DEV" | "AGENTIC_AI";
     result: {
       devCostPerRelHour: number | null;
       qaCostPerDevRelHour: number;
@@ -49,7 +50,8 @@ export function ResultsTable({
     // CSV Headers
     const headers = [
       "Tech Stack",
-      "Dev Cost per Releaseable Hour",
+      "Category",
+      "Cost per Releaseable Hour",
       "QA Cost per Dev Releaseable Hour",
       "BA Cost per Dev Releaseable Hour",
       "Releaseable Cost",
@@ -57,11 +59,12 @@ export function ResultsTable({
     ];
 
     // CSV Rows
-    const rows = stackResults.map(({ stack, result }) => [
+    const rows = stackResults.map(({ stack, category, result }) => [
       stack.name,
+      category === "DEV" ? "DEV" : "Agentic AI",
       result.devCostPerRelHour !== null ? result.devCostPerRelHour.toString() : "N/A",
-      qaCostPerDevRelHour.toString(),
-      baCostPerDevRelHour.toString(),
+      category === "DEV" ? qaCostPerDevRelHour.toString() : "0 (excluded)",
+      category === "DEV" ? baCostPerDevRelHour.toString() : "0 (excluded)",
       result.releaseableCost !== null ? result.releaseableCost.toString() : "N/A",
       result.finalPrice !== null ? result.finalPrice.toString() : "N/A",
     ]);
@@ -104,7 +107,8 @@ export function ResultsTable({
             <TableHeader>
               <TableRow>
                 <TableHead className="sticky left-0 bg-background z-10">Tech Stack</TableHead>
-                <TableHead className="text-right">Dev Rate</TableHead>
+                <TableHead>Category</TableHead>
+                <TableHead className="text-right">Rate</TableHead>
                 <TableHead className="text-right">QA Add-on</TableHead>
                 <TableHead className="text-right">BA Add-on</TableHead>
                 <TableHead className="text-right">Releaseable Cost</TableHead>
@@ -114,24 +118,35 @@ export function ResultsTable({
             <TableBody>
               {stackResults.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                    No tech stacks found with active DEV employees.
+                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                    No tech stacks found with active DEV or AGENTIC_AI employees.
                   </TableCell>
                 </TableRow>
               ) : (
-                stackResults.map(({ stack, result }) => (
-                  <TableRow key={stack.id}>
+                stackResults.map(({ stack, category, result }) => (
+                  <TableRow key={`${stack.id}-${category}`}>
                     <TableCell className="sticky left-0 bg-background z-10 font-medium">
                       {stack.name}
+                    </TableCell>
+                    <TableCell>
+                      {category === "DEV" ? "DEV" : "Agentic AI"}
                     </TableCell>
                     <TableCell className="text-right">
                       {formatMoney(result.devCostPerRelHour, currency)}
                     </TableCell>
                     <TableCell className="text-right">
-                      {formatMoney(qaCostPerDevRelHour, currency)}
+                      {category === "DEV" ? (
+                        formatMoney(qaCostPerDevRelHour, currency)
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
-                      {formatMoney(baCostPerDevRelHour, currency)}
+                      {category === "DEV" ? (
+                        formatMoney(baCostPerDevRelHour, currency)
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
                       {formatMoney(result.releaseableCost, currency)}

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   calculatePricing,
+  calculatePricingForCategory,
   calculateDevCostPerRelHour,
   calculateQaCostPerDevRelHour,
   calculateBaCostPerDevRelHour,
@@ -84,6 +85,27 @@ describe("pricing calculations", () => {
     annualBenefits: 5000,
     annualBonus: 5000,
     fte: 1.0,
+    overheadAllocs: [
+      { overheadTypeId: "overhead-mgmt", share: 0.1 },
+      { overheadTypeId: "overhead-company", share: 0.2 },
+    ],
+  });
+
+  const createAgenticAiEmployee = (
+    techStackId: string,
+    grossMonthly: number = 10000,
+    fte: number = 1.0
+  ): Employee => ({
+    id: `agentic-ai-${techStackId}`,
+    name: "Agentic AI Employee",
+    category: "AGENTIC_AI",
+    techStackId,
+    grossMonthly,
+    netMonthly: grossMonthly * 0.7,
+    oncostRate: 0.1,
+    annualBenefits: 5000,
+    annualBonus: 10000,
+    fte,
     overheadAllocs: [
       { overheadTypeId: "overhead-mgmt", share: 0.1 },
       { overheadTypeId: "overhead-company", share: 0.2 },
@@ -361,7 +383,7 @@ describe("pricing calculations", () => {
 
       expect(() => {
         calculateDevCostPerRelHour([devEmployee], baseOverheadTypes, settings);
-      }).toThrow("devHoursCapacity is zero");
+      }).toThrow("hoursCapacity is zero");
     });
 
     it("should throw error when standardHoursPerMonth is zero for QA", () => {
@@ -477,6 +499,162 @@ describe("pricing calculations", () => {
       expect(costZeroRatio).not.toBeNull();
       // Both should be the same (in EGP)
       expect(costNoRatio).toBeCloseTo(costZeroRatio!, 2);
+    });
+  });
+
+  describe("AGENTIC_AI pricing excludes QA/BA costs", () => {
+    it("AGENTIC_AI price should not change when qaRatio changes", () => {
+      const techStackId = "stack-1";
+      const agenticAiEmployee = createAgenticAiEmployee(techStackId, 10000, 1.0);
+      const qaEmployee = createQaEmployee(8000);
+
+      const settingsLowQa: Settings = {
+        ...baseSettings,
+        qa_ratio: 0.3,
+      };
+
+      const settingsHighQa: Settings = {
+        ...baseSettings,
+        qa_ratio: 0.7,
+      };
+
+      const resultLowQa = calculatePricingForCategory(
+        "AGENTIC_AI",
+        techStackId,
+        [agenticAiEmployee, qaEmployee],
+        baseOverheadTypes,
+        settingsLowQa
+      );
+
+      const resultHighQa = calculatePricingForCategory(
+        "AGENTIC_AI",
+        techStackId,
+        [agenticAiEmployee, qaEmployee],
+        baseOverheadTypes,
+        settingsHighQa
+      );
+
+      // AGENTIC_AI final price should be the same regardless of qaRatio
+      expect(resultLowQa.finalPrice).not.toBeNull();
+      expect(resultHighQa.finalPrice).not.toBeNull();
+      expect(resultLowQa.finalPrice).toBeCloseTo(resultHighQa.finalPrice!, 2);
+      expect(resultLowQa.qaCostPerDevRelHour).toBe(0);
+      expect(resultHighQa.qaCostPerDevRelHour).toBe(0);
+    });
+
+    it("AGENTIC_AI price should not change when baRatio changes", () => {
+      const techStackId = "stack-1";
+      const agenticAiEmployee = createAgenticAiEmployee(techStackId, 10000, 1.0);
+      const baEmployee = createBaEmployee(9000);
+
+      const settingsLowBa: Settings = {
+        ...baseSettings,
+        ba_ratio: 0.15,
+      };
+
+      const settingsHighBa: Settings = {
+        ...baseSettings,
+        ba_ratio: 0.35,
+      };
+
+      const resultLowBa = calculatePricingForCategory(
+        "AGENTIC_AI",
+        techStackId,
+        [agenticAiEmployee, baEmployee],
+        baseOverheadTypes,
+        settingsLowBa
+      );
+
+      const resultHighBa = calculatePricingForCategory(
+        "AGENTIC_AI",
+        techStackId,
+        [agenticAiEmployee, baEmployee],
+        baseOverheadTypes,
+        settingsHighBa
+      );
+
+      // AGENTIC_AI final price should be the same regardless of baRatio
+      expect(resultLowBa.finalPrice).not.toBeNull();
+      expect(resultHighBa.finalPrice).not.toBeNull();
+      expect(resultLowBa.finalPrice).toBeCloseTo(resultHighBa.finalPrice!, 2);
+      expect(resultLowBa.baCostPerDevRelHour).toBe(0);
+      expect(resultHighBa.baCostPerDevRelHour).toBe(0);
+    });
+
+    it("DEV price should change when qaRatio changes", () => {
+      const techStackId = "stack-1";
+      const devEmployee = createDevEmployee(techStackId, 10000, 1.0);
+      const qaEmployee = createQaEmployee(8000);
+
+      const settingsLowQa: Settings = {
+        ...baseSettings,
+        qa_ratio: 0.3,
+      };
+
+      const settingsHighQa: Settings = {
+        ...baseSettings,
+        qa_ratio: 0.7,
+      };
+
+      const resultLowQa = calculatePricingForCategory(
+        "DEV",
+        techStackId,
+        [devEmployee, qaEmployee],
+        baseOverheadTypes,
+        settingsLowQa
+      );
+
+      const resultHighQa = calculatePricingForCategory(
+        "DEV",
+        techStackId,
+        [devEmployee, qaEmployee],
+        baseOverheadTypes,
+        settingsHighQa
+      );
+
+      // DEV final price should be different when qaRatio changes
+      expect(resultLowQa.finalPrice).not.toBeNull();
+      expect(resultHighQa.finalPrice).not.toBeNull();
+      expect(resultLowQa.finalPrice).not.toBeCloseTo(resultHighQa.finalPrice!, 2);
+      expect(resultLowQa.qaCostPerDevRelHour).toBeLessThan(resultHighQa.qaCostPerDevRelHour);
+    });
+
+    it("DEV price should change when baRatio changes", () => {
+      const techStackId = "stack-1";
+      const devEmployee = createDevEmployee(techStackId, 10000, 1.0);
+      const baEmployee = createBaEmployee(9000);
+
+      const settingsLowBa: Settings = {
+        ...baseSettings,
+        ba_ratio: 0.15,
+      };
+
+      const settingsHighBa: Settings = {
+        ...baseSettings,
+        ba_ratio: 0.35,
+      };
+
+      const resultLowBa = calculatePricingForCategory(
+        "DEV",
+        techStackId,
+        [devEmployee, baEmployee],
+        baseOverheadTypes,
+        settingsLowBa
+      );
+
+      const resultHighBa = calculatePricingForCategory(
+        "DEV",
+        techStackId,
+        [devEmployee, baEmployee],
+        baseOverheadTypes,
+        settingsHighBa
+      );
+
+      // DEV final price should be different when baRatio changes
+      expect(resultLowBa.finalPrice).not.toBeNull();
+      expect(resultHighBa.finalPrice).not.toBeNull();
+      expect(resultLowBa.finalPrice).not.toBeCloseTo(resultHighBa.finalPrice!, 2);
+      expect(resultLowBa.baCostPerDevRelHour).toBeLessThan(resultHighBa.baCostPerDevRelHour);
     });
   });
 });

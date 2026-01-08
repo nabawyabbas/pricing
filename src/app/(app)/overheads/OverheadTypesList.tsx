@@ -49,6 +49,7 @@ import {
 } from "./actions";
 import { toast } from "sonner";
 import { formatMoney, formatPercent } from "@/lib/format";
+import { type Settings, getExchangeRatio } from "@/lib/pricing";
 
 interface OverheadTypesListProps {
   overheadTypes: Array<{
@@ -61,6 +62,7 @@ interface OverheadTypesListProps {
   }>;
   totalsByType: Map<string, number>;
   missingAllocationsByType: Map<string, number>;
+  settings: Settings;
 }
 
 function convertToAnnual(amount: number, period: string): number {
@@ -80,7 +82,9 @@ export function OverheadTypesList({
   overheadTypes,
   totalsByType,
   missingAllocationsByType,
+  settings,
 }: OverheadTypesListProps) {
+  const exchangeRatio = getExchangeRatio(settings);
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [showInactive, setShowInactive] = useState(false);
@@ -260,9 +264,9 @@ export function OverheadTypesList({
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
+                  <TableHead className="text-right">Amount (USD)</TableHead>
                   <TableHead>Period</TableHead>
-                  <TableHead className="text-right">Annual Equivalent</TableHead>
+                  <TableHead className="text-right">Annual Equivalent (USD)</TableHead>
                   <TableHead className="text-center">Allocation Sum</TableHead>
                   <TableHead className="text-center">Missing</TableHead>
                   <TableHead className="text-center">Status</TableHead>
@@ -274,7 +278,12 @@ export function OverheadTypesList({
                   const totalShare = totalsByType.get(type.id) ?? 0;
                   const missingCount = missingAllocationsByType.get(type.id) ?? 0;
                   const isWarning = Math.abs(totalShare - 1) > 0.01;
-                  const annualEquivalent = convertToAnnual(Number(type.amount), type.period);
+                  // Convert from EGP to USD using exchange ratio
+                  const amountInEGP = Number(type.amount);
+                  const amountInUSD = exchangeRatio && exchangeRatio > 0 
+                    ? amountInEGP / exchangeRatio 
+                    : amountInEGP;
+                  const annualEquivalent = convertToAnnual(amountInUSD, type.period);
 
                   return (
                     <TableRow
@@ -288,7 +297,7 @@ export function OverheadTypesList({
                         )}
                       </TableCell>
                       <TableCell className="text-right">
-                        {formatMoney(Number(type.amount), "USD")}
+                        {formatMoney(amountInUSD, "USD")}
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline">{type.period}</Badge>

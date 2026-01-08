@@ -4,6 +4,7 @@ import {
   type OverheadType,
   type Settings,
   calculatePricing,
+  calculatePricingForCategory,
   getExchangeRatio,
 } from "@/lib/pricing";
 import {
@@ -18,6 +19,17 @@ import {
 import { calculateFullyLoadedMonthly } from "@/lib/pricing";
 import { Prisma } from "@prisma/client";
 import { formatMoney, formatPercent, formatNumber, type Currency } from "@/lib/format";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableFooter,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 
 // Load all data efficiently
 async function getTechStacks() {
@@ -102,7 +114,7 @@ function convertEmployee(
   return {
     id: emp.id,
     name: emp.name,
-    category: emp.category as "DEV" | "QA" | "BA",
+    category: emp.category as "DEV" | "QA" | "BA" | "AGENTIC_AI",
     techStackId: emp.techStackId,
     grossMonthly: Number(emp.grossMonthly),
     netMonthly: Number(emp.netMonthly),
@@ -132,29 +144,56 @@ export default async function DashboardPage() {
   const activeOverheadTypeIds = new Set(allOverheadTypesFromDb.map((t) => t.id));
   const activeOverheadTypes = overheadTypesRaw.filter((t) => activeOverheadTypeIds.has(t.id));
 
-  // Filter employees to active only
+  // Separate active and inactive employees
   const activeEmployeesRaw = employeesRaw.filter((e) => e.isActive);
-  const employees = activeEmployeesRaw.map((emp) => convertEmployee(emp, activeOverheadTypeIds));
+  const inactiveEmployeesRaw = employeesRaw.filter((e) => !e.isActive);
+  
+  // Convert both active and inactive employees to pricing format
+  const activeEmployees = activeEmployeesRaw.map((emp) => convertEmployee(emp, activeOverheadTypeIds));
+  const inactiveEmployees = inactiveEmployeesRaw.map((emp) => convertEmployee(emp, activeOverheadTypeIds));
 
   // Count inactive items for warnings
-  const inactiveEmployeeCount = employeesRaw.filter((e) => !e.isActive).length;
+  const inactiveEmployeeCount = inactiveEmployeesRaw.length;
   const inactiveOverheadCount = overheadTypesRaw.length - activeOverheadTypes.length;
 
   const exchangeRatio = getExchangeRatio(settings);
   const currency: Currency = exchangeRatio && exchangeRatio > 0 ? "USD" : "EGP";
 
-  // Group employees
-  const devEmployees = employees.filter((e) => e.category === "DEV");
-  const qaEmployees = employees.filter((e) => e.category === "QA");
-  const baEmployees = employees.filter((e) => e.category === "BA");
+  // Group active employees by category
+  const activeDevEmployees = activeEmployees.filter((e) => e.category === "DEV");
+  const activeQaEmployees = activeEmployees.filter((e) => e.category === "QA");
+  const activeBaEmployees = activeEmployees.filter((e) => e.category === "BA");
+  const activeAgenticAiEmployees = activeEmployees.filter((e) => e.category === "AGENTIC_AI");
+
+  // Group inactive employees by category
+  const inactiveDevEmployees = inactiveEmployees.filter((e) => e.category === "DEV");
+  const inactiveQaEmployees = inactiveEmployees.filter((e) => e.category === "QA");
+  const inactiveBaEmployees = inactiveEmployees.filter((e) => e.category === "BA");
+  const inactiveAgenticAiEmployees = inactiveEmployees.filter((e) => e.category === "AGENTIC_AI");
+
+  // Calculate active monthly costs by category
+  const activeDevMonthlyCost = calculateTotalMonthlyCost(activeDevEmployees, activeOverheadTypes, exchangeRatio);
+  const activeQaMonthlyCost = calculateTotalMonthlyCost(activeQaEmployees, activeOverheadTypes, exchangeRatio);
+  const activeBaMonthlyCost = calculateTotalMonthlyCost(activeBaEmployees, activeOverheadTypes, exchangeRatio);
+  const activeAgenticAiMonthlyCost = calculateTotalMonthlyCost(activeAgenticAiEmployees, activeOverheadTypes, exchangeRatio);
+  const totalActiveMonthlyCost = activeDevMonthlyCost + activeQaMonthlyCost + activeBaMonthlyCost + activeAgenticAiMonthlyCost;
+
+  // Calculate inactive monthly costs by category
+  const inactiveDevMonthlyCost = calculateTotalMonthlyCost(inactiveDevEmployees, activeOverheadTypes, exchangeRatio);
+  const inactiveQaMonthlyCost = calculateTotalMonthlyCost(inactiveQaEmployees, activeOverheadTypes, exchangeRatio);
+  const inactiveBaMonthlyCost = calculateTotalMonthlyCost(inactiveBaEmployees, activeOverheadTypes, exchangeRatio);
+  const inactiveAgenticAiMonthlyCost = calculateTotalMonthlyCost(inactiveAgenticAiEmployees, activeOverheadTypes, exchangeRatio);
+  const totalInactiveMonthlyCost = inactiveDevMonthlyCost + inactiveQaMonthlyCost + inactiveBaMonthlyCost + inactiveAgenticAiMonthlyCost;
 
   // Calculate KPIs (only active items)
-  const totalMonthlyCost = calculateTotalMonthlyCost(employees, activeOverheadTypes, exchangeRatio);
+  const totalMonthlyCost = totalActiveMonthlyCost;
   const totalOverheadMonthly = calculateTotalOverheadMonthly(activeOverheadTypes, exchangeRatio);
 
-  // Group DEV employees by tech stack
+  // Group DEV and AGENTIC_AI employees by tech stack (active only for stack calculations)
   const devByStack = new Map<string, Employee[]>();
-  devEmployees.forEach((emp) => {
+  const agenticAiByStack = new Map<string, Employee[]>();
+  
+  activeDevEmployees.forEach((emp) => {
     const stackId = emp.techStackId || "unassigned";
     if (!devByStack.has(stackId)) {
       devByStack.set(stackId, []);
@@ -162,29 +201,75 @@ export default async function DashboardPage() {
     devByStack.get(stackId)!.push(emp);
   });
 
-  // Calculate stack pricing (only active items)
-  const stackData = techStacks.map((stack) => {
-    const stackDevs = devByStack.get(stack.id) || [];
-    const result = calculatePricing(stack.id, employees, activeOverheadTypes, settings);
-    const totalFte = stackDevs.reduce((sum, emp) => sum + emp.fte, 0);
-    const stackMonthlyCost = stackDevs.reduce(
-      (sum, emp) => sum + calculateFullyLoadedMonthly(emp, activeOverheadTypes, exchangeRatio),
-      0
-    );
+  activeAgenticAiEmployees.forEach((emp) => {
+    const stackId = emp.techStackId || "unassigned";
+    if (!agenticAiByStack.has(stackId)) {
+      agenticAiByStack.set(stackId, []);
+    }
+    agenticAiByStack.get(stackId)!.push(emp);
+  });
 
-    return {
-      stack,
-      devCount: stackDevs.length,
-      totalFte,
-      monthlyCost: stackMonthlyCost,
-      result,
-    };
+  // Calculate stack pricing (only active items) - separate rows for DEV and AGENTIC_AI
+  const stackData = techStacks.flatMap((stack) => {
+    const stackDevs = devByStack.get(stack.id) || [];
+    const stackAgenticAi = agenticAiByStack.get(stack.id) || [];
+    const results = [];
+
+    // Add DEV row if there are DEV employees
+    if (stackDevs.length > 0) {
+      const devResult = calculatePricingForCategory(
+        "DEV",
+        stack.id,
+        activeEmployees,
+        activeOverheadTypes,
+        settings
+      );
+      const devFte = stackDevs.reduce((sum, emp) => sum + emp.fte, 0);
+      const devMonthlyCost = stackDevs.reduce(
+        (sum, emp) => sum + calculateFullyLoadedMonthly(emp, activeOverheadTypes, exchangeRatio),
+        0
+      );
+      results.push({
+        stack,
+        category: "DEV" as const,
+        devCount: stackDevs.length,
+        totalFte: devFte,
+        monthlyCost: devMonthlyCost,
+        result: devResult,
+      });
+    }
+
+    // Add AGENTIC_AI row if there are AGENTIC_AI employees
+    if (stackAgenticAi.length > 0) {
+      const agenticAiResult = calculatePricingForCategory(
+        "AGENTIC_AI",
+        stack.id,
+        activeEmployees,
+        activeOverheadTypes,
+        settings
+      );
+      const agenticAiFte = stackAgenticAi.reduce((sum, emp) => sum + emp.fte, 0);
+      const agenticAiMonthlyCost = stackAgenticAi.reduce(
+        (sum, emp) => sum + calculateFullyLoadedMonthly(emp, activeOverheadTypes, exchangeRatio),
+        0
+      );
+      results.push({
+        stack,
+        category: "AGENTIC_AI" as const,
+        devCount: stackAgenticAi.length,
+        totalFte: agenticAiFte,
+        monthlyCost: agenticAiMonthlyCost,
+        result: agenticAiResult,
+      });
+    }
+
+    return results;
   });
 
   // Calculate overhead allocation data (only active items)
   const overheadData = activeOverheadTypes.map((type) => {
-    const allocationSum = getOverheadAllocationSum(type.id, employees);
-    const missingCount = countEmployeesMissingAllocation(type.id, employees);
+    const allocationSum = getOverheadAllocationSum(type.id, activeEmployees);
+    const missingCount = countEmployeesMissingAllocation(type.id, activeEmployees);
     const monthlyEquivalent = convertToMonthly(type.amount, type.period);
     const monthlyEquivalentConverted = exchangeRatio && exchangeRatio > 0
       ? monthlyEquivalent / exchangeRatio
@@ -200,288 +285,308 @@ export default async function DashboardPage() {
     };
   });
 
-  // Data quality checks
+  // Data quality checks (only active employees)
   const missingSettings = findMissingSettings(settings);
   const invalidOverheads = overheadData.filter((d) => !d.isValid);
-  const employeesWithMissingAllocs = employees.filter((emp) => {
+  const employeesWithMissingAllocs = activeEmployees.filter((emp) => {
     return activeOverheadTypes.some((type) => {
       return !emp.overheadAllocs?.some((a) => a.overheadTypeId === type.id);
     });
   });
 
   return (
-    <div style={{ maxWidth: "1400px", margin: "0 auto" }}>
-
+    <div className="space-y-6">
       {/* Inactive Items Warning */}
       {(inactiveEmployeeCount > 0 || inactiveOverheadCount > 0) && (
-        <div
-          style={{
-            marginBottom: "2rem",
-            padding: "1rem",
-            border: "1px solid #ffc107",
-            borderRadius: "8px",
-            backgroundColor: "#fff3cd",
-            color: "#856404",
-          }}
-        >
-          <strong>Note:</strong> Excluding from calculations: {inactiveEmployeeCount} inactive employee(s) and {inactiveOverheadCount} inactive overhead type(s). Only active items are included in all cost/rate calculations.
-        </div>
+        <Card className="border-yellow-500 bg-yellow-50">
+          <CardContent className="pt-6">
+            <div className="text-sm text-yellow-800">
+              <strong>Note:</strong> Excluding from calculations: {inactiveEmployeeCount} inactive employee(s) and {inactiveOverheadCount} inactive overhead type(s). Only active items are included in all cost/rate calculations.
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* KPI Cards */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
-          gap: "1rem",
-          marginBottom: "2rem",
-        }}
-      >
-        <div
-          style={{
-            padding: "1.5rem",
-            border: "1px solid #ddd",
-            borderRadius: "8px",
-            backgroundColor: "#f9f9f9",
-          }}
-        >
-          <div style={{ fontSize: "0.9rem", color: "#666", marginBottom: "0.5rem" }}>Total Employees (Active)</div>
-          <div style={{ fontSize: "1.5rem", fontWeight: "600" }}>
-            {employees.length}
-          </div>
-          <div style={{ fontSize: "0.85rem", color: "#666", marginTop: "0.5rem" }}>
-            DEV: {devEmployees.length} | QA: {qaEmployees.length} | BA: {baEmployees.length}
-          </div>
-          {inactiveEmployeeCount > 0 && (
-            <div style={{ fontSize: "0.75rem", color: "#856404", marginTop: "0.5rem" }}>
-              ({inactiveEmployeeCount} inactive excluded)
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Total Employees
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{activeEmployees.length}</div>
+            <div className="text-xs text-muted-foreground mt-1">
+              DEV: {activeDevEmployees.length} | QA: {activeQaEmployees.length} | BA: {activeBaEmployees.length} | Agentic AI: {activeAgenticAiEmployees.length}
             </div>
-          )}
-        </div>
+            {inactiveEmployeeCount > 0 && (
+              <div className="text-xs text-yellow-600 mt-1">
+                ({inactiveEmployeeCount} inactive excluded)
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
-        <div
-          style={{
-            padding: "1.5rem",
-            border: "1px solid #ddd",
-            borderRadius: "8px",
-            backgroundColor: "#f9f9f9",
-          }}
-        >
-          <div style={{ fontSize: "0.9rem", color: "#666", marginBottom: "0.5rem" }}>
-            Total Monthly Cost ({currency})
-          </div>
-          <div style={{ fontSize: "1.5rem", fontWeight: "600" }}>
-            {formatMoney(totalMonthlyCost, currency)}
-          </div>
-          <div style={{ fontSize: "0.85rem", color: "#666", marginTop: "0.5rem" }}>
-            Fully-loaded (active employees only)
-          </div>
-        </div>
-
-        <div
-          style={{
-            padding: "1.5rem",
-            border: "1px solid #ddd",
-            borderRadius: "8px",
-            backgroundColor: "#f9f9f9",
-          }}
-        >
-          <div style={{ fontSize: "0.9rem", color: "#666", marginBottom: "0.5rem" }}>
-            Total Overhead Monthly ({currency})
-          </div>
-          <div style={{ fontSize: "1.5rem", fontWeight: "600" }}>
-            {formatMoney(totalOverheadMonthly, currency)}
-          </div>
-          <div style={{ fontSize: "0.85rem", color: "#666", marginTop: "0.5rem" }}>
-            Sum of active overhead types
-          </div>
-          {inactiveOverheadCount > 0 && (
-            <div style={{ fontSize: "0.75rem", color: "#856404", marginTop: "0.5rem" }}>
-              ({inactiveOverheadCount} inactive excluded)
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Total Monthly Cost ({currency})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{formatMoney(totalActiveMonthlyCost, currency)}</div>
+            <div className="text-xs text-muted-foreground mt-1">
+              Fully-loaded (active employees only)
             </div>
-          )}
-        </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Total Overhead Monthly ({currency})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{formatMoney(totalOverheadMonthly, currency)}</div>
+            <div className="text-xs text-muted-foreground mt-1">
+              Sum of active overhead types
+            </div>
+            {inactiveOverheadCount > 0 && (
+              <div className="text-xs text-yellow-600 mt-1">
+                ({inactiveOverheadCount} inactive excluded)
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {totalInactiveMonthlyCost > 0 && (
+          <Card className="border-yellow-200 bg-yellow-50">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium text-yellow-800">
+                Inactive Monthly Cost ({currency})
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-yellow-900">{formatMoney(totalInactiveMonthlyCost, currency)}</div>
+              <div className="text-xs text-yellow-700 mt-1">
+                Excluded from calculations
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
+
+      {/* Cost Summary by Category */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Monthly Fully-Loaded Cost by Category ({currency})</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Category</TableHead>
+                <TableHead className="text-right">Active Count</TableHead>
+                <TableHead className="text-right">Active Cost</TableHead>
+                <TableHead className="text-right">Inactive Count</TableHead>
+                <TableHead className="text-right">Inactive Cost</TableHead>
+                <TableHead className="text-right">Total Cost</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow>
+                <TableCell className="font-medium">DEV</TableCell>
+                <TableCell className="text-right">{activeDevEmployees.length}</TableCell>
+                <TableCell className="text-right">{formatMoney(activeDevMonthlyCost, currency)}</TableCell>
+                <TableCell className="text-right">{inactiveDevEmployees.length}</TableCell>
+                <TableCell className="text-right text-muted-foreground">
+                  {formatMoney(inactiveDevMonthlyCost, currency)}
+                </TableCell>
+                <TableCell className="text-right font-semibold">
+                  {formatMoney(activeDevMonthlyCost + inactiveDevMonthlyCost, currency)}
+                </TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell className="font-medium">QA</TableCell>
+                <TableCell className="text-right">{activeQaEmployees.length}</TableCell>
+                <TableCell className="text-right">{formatMoney(activeQaMonthlyCost, currency)}</TableCell>
+                <TableCell className="text-right">{inactiveQaEmployees.length}</TableCell>
+                <TableCell className="text-right text-muted-foreground">
+                  {formatMoney(inactiveQaMonthlyCost, currency)}
+                </TableCell>
+                <TableCell className="text-right font-semibold">
+                  {formatMoney(activeQaMonthlyCost + inactiveQaMonthlyCost, currency)}
+                </TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell className="font-medium">BA</TableCell>
+                <TableCell className="text-right">{activeBaEmployees.length}</TableCell>
+                <TableCell className="text-right">{formatMoney(activeBaMonthlyCost, currency)}</TableCell>
+                <TableCell className="text-right">{inactiveBaEmployees.length}</TableCell>
+                <TableCell className="text-right text-muted-foreground">
+                  {formatMoney(inactiveBaMonthlyCost, currency)}
+                </TableCell>
+                <TableCell className="text-right font-semibold">
+                  {formatMoney(activeBaMonthlyCost + inactiveBaMonthlyCost, currency)}
+                </TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell className="font-medium">Agentic AI</TableCell>
+                <TableCell className="text-right">{activeAgenticAiEmployees.length}</TableCell>
+                <TableCell className="text-right">{formatMoney(activeAgenticAiMonthlyCost, currency)}</TableCell>
+                <TableCell className="text-right">{inactiveAgenticAiEmployees.length}</TableCell>
+                <TableCell className="text-right text-muted-foreground">
+                  {formatMoney(inactiveAgenticAiMonthlyCost, currency)}
+                </TableCell>
+                <TableCell className="text-right font-semibold">
+                  {formatMoney(activeAgenticAiMonthlyCost + inactiveAgenticAiMonthlyCost, currency)}
+                </TableCell>
+              </TableRow>
+            </TableBody>
+            <TableFooter>
+              <TableRow>
+                <TableCell className="font-semibold">Total</TableCell>
+                <TableCell className="text-right font-semibold">{activeEmployees.length}</TableCell>
+                <TableCell className="text-right font-semibold">{formatMoney(totalActiveMonthlyCost, currency)}</TableCell>
+                <TableCell className="text-right font-semibold">{inactiveEmployees.length}</TableCell>
+                <TableCell className="text-right font-semibold text-muted-foreground">
+                  {formatMoney(totalInactiveMonthlyCost, currency)}
+                </TableCell>
+                <TableCell className="text-right font-bold">
+                  {formatMoney(totalActiveMonthlyCost + totalInactiveMonthlyCost, currency)}
+                </TableCell>
+              </TableRow>
+            </TableFooter>
+          </Table>
+        </CardContent>
+      </Card>
 
       {/* Stacks Table */}
-      <div style={{ marginBottom: "2rem" }}>
-        <h2 style={{ marginBottom: "1rem" }}>Tech Stacks</h2>
-        {stackData.length === 0 ? (
-          <p style={{ color: "#666", fontStyle: "italic" }}>No tech stacks found.</p>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table
-              style={{
-                width: "100%",
-                borderCollapse: "collapse",
-                backgroundColor: "white",
-                border: "1px solid #ddd",
-                borderRadius: "4px",
-              }}
-            >
-              <thead>
-                <tr style={{ backgroundColor: "#f8f9fa" }}>
-                  <th style={{ padding: "0.75rem", textAlign: "left", borderBottom: "2px solid #ddd" }}>Stack Name</th>
-                  <th style={{ padding: "0.75rem", textAlign: "center", borderBottom: "2px solid #ddd" }}>DEV Count</th>
-                  <th style={{ padding: "0.75rem", textAlign: "center", borderBottom: "2px solid #ddd" }}>Total FTE</th>
-                  <th style={{ padding: "0.75rem", textAlign: "right", borderBottom: "2px solid #ddd" }}>
-                    Monthly Cost ({currency})
-                  </th>
-                  <th style={{ padding: "0.75rem", textAlign: "right", borderBottom: "2px solid #ddd" }}>
-                    Dev Cost/Hour ({currency})
-                  </th>
-                  <th style={{ padding: "0.75rem", textAlign: "right", borderBottom: "2px solid #ddd" }}>
-                    Releaseable Cost/Hour ({currency})
-                  </th>
-                  <th style={{ padding: "0.75rem", textAlign: "right", borderBottom: "2px solid #ddd" }}>
-                    Final Price/Hour ({currency})
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {stackData.map(({ stack, devCount, totalFte, monthlyCost, result }) => (
-                  <tr key={stack.id}>
-                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #ddd" }}>{stack.name}</td>
-                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #ddd", textAlign: "center" }}>
-                      {devCount}
-                    </td>
-                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #ddd", textAlign: "center" }}>
-                      {formatNumber(totalFte, 2)}
-                    </td>
-                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #ddd", textAlign: "right" }}>
-                      {formatMoney(monthlyCost, currency)}
-                    </td>
-                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #ddd", textAlign: "right" }}>
-                      {result.devCostPerRelHour !== null
-                        ? formatMoney(result.devCostPerRelHour, currency)
-                        : "N/A"}
-                    </td>
-                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #ddd", textAlign: "right" }}>
-                      {result.releaseableCost !== null
-                        ? formatMoney(result.releaseableCost, currency)
-                        : "N/A"}
-                    </td>
-                    <td style={{ padding: "0.75rem", borderBottom: "1px solid #ddd", textAlign: "right" }}>
-                      {formatMoney(result.finalPrice, currency)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Tech Stacks</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {stackData.length === 0 ? (
+            <p className="text-muted-foreground italic">No tech stacks found with active DEV or AGENTIC_AI employees.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Stack Name</TableHead>
+                    <TableHead>Category</TableHead>
+                    <TableHead className="text-center">Count</TableHead>
+                    <TableHead className="text-center">Total FTE</TableHead>
+                    <TableHead className="text-right">Monthly Cost ({currency})</TableHead>
+                    <TableHead className="text-right">Cost/Hour ({currency})</TableHead>
+                    <TableHead className="text-right">Releaseable Cost/Hour ({currency})</TableHead>
+                    <TableHead className="text-right">Final Price/Hour ({currency})</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {stackData.map(({ stack, category, devCount, totalFte, monthlyCost, result }) => (
+                    <TableRow key={`${stack.id}-${category}`}>
+                      <TableCell className="font-medium">{stack.name}</TableCell>
+                      <TableCell>{category === "DEV" ? "DEV" : "Agentic AI"}</TableCell>
+                      <TableCell className="text-center">{devCount}</TableCell>
+                      <TableCell className="text-center">{formatNumber(totalFte, 2)}</TableCell>
+                      <TableCell className="text-right">{formatMoney(monthlyCost, currency)}</TableCell>
+                      <TableCell className="text-right">
+                        {result.devCostPerRelHour !== null
+                          ? formatMoney(result.devCostPerRelHour, currency)
+                          : "N/A"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {result.releaseableCost !== null
+                          ? formatMoney(result.releaseableCost, currency)
+                          : "N/A"}
+                      </TableCell>
+                      <TableCell className="text-right">{formatMoney(result.finalPrice, currency)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Overheads Table */}
-      <div style={{ marginBottom: "2rem" }}>
-        <h2 style={{ marginBottom: "1rem" }}>Overheads (Active Only)</h2>
-        {overheadData.length === 0 ? (
-          <p style={{ color: "#666", fontStyle: "italic" }}>No active overhead types found.</p>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table
-              style={{
-                width: "100%",
-                borderCollapse: "collapse",
-                backgroundColor: "white",
-                border: "1px solid #ddd",
-                borderRadius: "4px",
-              }}
-            >
-              <thead>
-                <tr style={{ backgroundColor: "#f8f9fa" }}>
-                  <th style={{ padding: "0.75rem", textAlign: "left", borderBottom: "2px solid #ddd" }}>Overhead Name</th>
-                  <th style={{ padding: "0.75rem", textAlign: "right", borderBottom: "2px solid #ddd" }}>
-                    Amount ({currency})
-                  </th>
-                  <th style={{ padding: "0.75rem", textAlign: "left", borderBottom: "2px solid #ddd" }}>Period</th>
-                  <th style={{ padding: "0.75rem", textAlign: "right", borderBottom: "2px solid #ddd" }}>
-                    Monthly Equivalent ({currency})
-                  </th>
-                  <th style={{ padding: "0.75rem", textAlign: "center", borderBottom: "2px solid #ddd" }}>
-                    Allocation Sum %
-                  </th>
-                  <th style={{ padding: "0.75rem", textAlign: "center", borderBottom: "2px solid #ddd" }}>
-                    Missing Allocations
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {overheadData.map(({ type, allocationSum, missingCount, monthlyEquivalentConverted, isValid }) => {
-                  const amountConverted = exchangeRatio && exchangeRatio > 0
-                    ? type.amount / exchangeRatio
-                    : type.amount;
+      <Card>
+        <CardHeader>
+          <CardTitle>Overheads (Active Only)</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {overheadData.length === 0 ? (
+            <p className="text-muted-foreground italic">No active overhead types found.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Overhead Name</TableHead>
+                    <TableHead className="text-right">Amount ({currency})</TableHead>
+                    <TableHead>Period</TableHead>
+                    <TableHead className="text-right">Monthly Equivalent ({currency})</TableHead>
+                    <TableHead className="text-center">Allocation Sum %</TableHead>
+                    <TableHead className="text-center">Missing Allocations</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {overheadData.map(({ type, allocationSum, missingCount, monthlyEquivalentConverted, isValid }) => {
+                    const amountConverted = exchangeRatio && exchangeRatio > 0
+                      ? type.amount / exchangeRatio
+                      : type.amount;
 
-                  return (
-                    <tr
-                      key={type.id}
-                      style={{
-                        backgroundColor: !isValid ? "#fff3cd" : "white",
-                      }}
-                    >
-                      <td style={{ padding: "0.75rem", borderBottom: "1px solid #ddd" }}>{type.name}</td>
-                      <td style={{ padding: "0.75rem", borderBottom: "1px solid #ddd", textAlign: "right" }}>
-                        {formatMoney(amountConverted, currency)}
-                      </td>
-                      <td style={{ padding: "0.75rem", borderBottom: "1px solid #ddd" }}>
-                        <span
-                          style={{
-                            padding: "0.2rem 0.6rem",
-                            borderRadius: "4px",
-                            fontSize: "0.85rem",
-                            backgroundColor: "#e3f2fd",
-                            color: "#1976d2",
-                          }}
-                        >
-                          {type.period}
-                        </span>
-                      </td>
-                      <td style={{ padding: "0.75rem", borderBottom: "1px solid #ddd", textAlign: "right" }}>
-                        {formatMoney(monthlyEquivalentConverted, currency)}
-                      </td>
-                      <td
-                        style={{
-                          padding: "0.75rem",
-                          borderBottom: "1px solid #ddd",
-                          textAlign: "center",
-                          color: !isValid ? "#dc3545" : "#28a745",
-                          fontWeight: !isValid ? "600" : "normal",
-                        }}
+                    return (
+                      <TableRow
+                        key={type.id}
+                        className={!isValid ? "bg-yellow-50" : ""}
                       >
-                        {formatPercent(allocationSum, "decimal")}
-                      </td>
-                      <td style={{ padding: "0.75rem", borderBottom: "1px solid #ddd", textAlign: "center" }}>
-                        {missingCount > 0 ? (
-                          <span style={{ color: "#dc3545", fontWeight: "500" }}>{missingCount}</span>
-                        ) : (
-                          <span style={{ color: "#28a745" }}>0</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                        <TableCell className="font-medium">{type.name}</TableCell>
+                        <TableCell className="text-right">{formatMoney(amountConverted, currency)}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{type.period}</Badge>
+                        </TableCell>
+                        <TableCell className="text-right">{formatMoney(monthlyEquivalentConverted, currency)}</TableCell>
+                        <TableCell
+                          className={`text-center font-medium ${
+                            !isValid ? "text-destructive" : "text-green-600"
+                          }`}
+                        >
+                          {formatPercent(allocationSum, "decimal")}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          {missingCount > 0 ? (
+                            <span className="text-destructive font-medium">{missingCount}</span>
+                          ) : (
+                            <span className="text-green-600">0</span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Data Quality Warnings */}
       {(missingSettings.length > 0 || invalidOverheads.length > 0 || employeesWithMissingAllocs.length > 0) && (
-        <div style={{ marginBottom: "2rem" }}>
-          <h2 style={{ marginBottom: "1rem", color: "#856404" }}>Data Quality Warnings</h2>
-          <div
-            style={{
-              padding: "1.5rem",
-              border: "1px solid #ffc107",
-              borderRadius: "8px",
-              backgroundColor: "#fff3cd",
-            }}
-          >
+        <Card className="border-yellow-500 bg-yellow-50">
+          <CardHeader>
+            <CardTitle className="text-yellow-800">Data Quality Warnings</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
             {missingSettings.length > 0 && (
-              <div style={{ marginBottom: "1rem" }}>
-                <strong style={{ color: "#856404" }}>Missing Required Settings:</strong>
-                <ul style={{ marginTop: "0.5rem", marginLeft: "1.5rem", color: "#856404" }}>
+              <div>
+                <strong className="text-yellow-800">Missing Required Settings:</strong>
+                <ul className="mt-2 ml-6 list-disc text-yellow-800">
                   {missingSettings.map((key) => (
                     <li key={key}>{key}</li>
                   ))}
@@ -490,14 +595,14 @@ export default async function DashboardPage() {
             )}
 
             {invalidOverheads.length > 0 && (
-              <div style={{ marginBottom: "1rem" }}>
-                <strong style={{ color: "#856404" }}>
+              <div>
+                <strong className="text-yellow-800">
                   Overhead Types with Invalid Allocation Sums (not ~100%):
                 </strong>
-                <ul style={{ marginTop: "0.5rem", marginLeft: "1.5rem", color: "#856404" }}>
+                <ul className="mt-2 ml-6 list-disc text-yellow-800">
                   {invalidOverheads.map(({ type, allocationSum }) => (
                     <li key={type.id}>
-                      {type.name}: {(allocationSum * 100).toFixed(2)}%
+                      {type.name}: {formatPercent(allocationSum, "decimal")}
                     </li>
                   ))}
                 </ul>
@@ -506,42 +611,36 @@ export default async function DashboardPage() {
 
             {employeesWithMissingAllocs.length > 0 && (
               <div>
-                <strong style={{ color: "#856404" }}>
+                <strong className="text-yellow-800">
                   Employees Missing Allocation Rows ({employeesWithMissingAllocs.length}):
                 </strong>
-                <ul style={{ marginTop: "0.5rem", marginLeft: "1.5rem", color: "#856404" }}>
+                <ul className="mt-2 ml-6 list-disc text-yellow-800">
                   {employeesWithMissingAllocs.slice(0, 10).map((emp) => (
                     <li key={emp.id}>
                       {emp.name} ({emp.category})
                     </li>
                   ))}
                   {employeesWithMissingAllocs.length > 10 && (
-                    <li style={{ fontStyle: "italic" }}>
+                    <li className="italic">
                       ... and {employeesWithMissingAllocs.length - 10} more
                     </li>
                   )}
                 </ul>
               </div>
             )}
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* No warnings message */}
       {missingSettings.length === 0 &&
         invalidOverheads.length === 0 &&
         employeesWithMissingAllocs.length === 0 && (
-          <div
-            style={{
-              padding: "1.5rem",
-              border: "1px solid #28a745",
-              borderRadius: "8px",
-              backgroundColor: "#d4edda",
-              color: "#155724",
-            }}
-          >
-            ✓ All data quality checks passed. No warnings.
-          </div>
+          <Card className="border-green-500 bg-green-50">
+            <CardContent className="pt-6">
+              <div className="text-green-800">✓ All data quality checks passed. No warnings.</div>
+            </CardContent>
+          </Card>
         )}
     </div>
   );

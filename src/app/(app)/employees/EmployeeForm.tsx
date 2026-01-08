@@ -74,10 +74,11 @@ export function EmployeeForm({ techStacks, settings }: EmployeeFormProps) {
                   <SelectItem value="DEV">DEV</SelectItem>
                   <SelectItem value="QA">QA</SelectItem>
                   <SelectItem value="BA">BA</SelectItem>
+                  <SelectItem value="AGENTIC_AI">Agentic AI</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            {category === "DEV" && (
+            {(category === "DEV" || category === "AGENTIC_AI") && (
               <div>
                 <Label htmlFor="techStackId">Tech Stack *</Label>
                 <Select name="techStackId" required disabled={isPending}>
@@ -107,7 +108,7 @@ export function EmployeeForm({ techStacks, settings }: EmployeeFormProps) {
               />
             </div>
             <div>
-              <Label htmlFor="grossMonthly">Gross Monthly ({currency}) *</Label>
+              <Label htmlFor="grossMonthly">Gross Monthly (EGP) *</Label>
               <Input
                 id="grossMonthly"
                 name="grossMonthly"
@@ -119,7 +120,7 @@ export function EmployeeForm({ techStacks, settings }: EmployeeFormProps) {
               />
             </div>
             <div>
-              <Label htmlFor="netMonthly">Net Monthly ({currency}) *</Label>
+              <Label htmlFor="netMonthly">Net Monthly (EGP) *</Label>
               <Input
                 id="netMonthly"
                 name="netMonthly"

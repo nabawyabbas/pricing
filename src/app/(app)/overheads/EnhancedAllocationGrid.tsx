@@ -323,7 +323,7 @@ export function EnhancedAllocationGrid({
                       </TableCell>
                       <TableCell>{employee.techStack?.name || "-"}</TableCell>
                       <TableCell className="text-right">
-                        {formatMoney(Number(employee.grossMonthly), "USD")}
+                        {formatMoney(Number(employee.grossMonthly), "EGP")}
                       </TableCell>
                       <TableCell className="text-center">
                         <Badge variant={employee.isActive ? "default" : "secondary"}>

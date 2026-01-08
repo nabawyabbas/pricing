@@ -11,11 +11,12 @@ export type PercentMode = "decimal" | "percent";
  * @param value - The numeric value to format (can be null)
  * @param currency - Currency type (defaults to "EGP")
  * @returns Formatted string with currency symbol, or "N/A" if value is null
+ * EGP -> "{n} LE", USD -> "${n}"
  */
 export function formatMoney(value: number | null, currency: Currency = "EGP"): string {
   if (value === null || isNaN(value)) return "N/A";
-  const symbol = currency === "USD" ? "$" : "EGP ";
-  return `${symbol}${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const formatted = value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return currency === "USD" ? `$${formatted}` : `${formatted} LE`;
 }
 
 /**

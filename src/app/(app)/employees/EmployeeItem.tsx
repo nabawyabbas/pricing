@@ -60,8 +60,8 @@ export function EmployeeItem({ employee, techStacks }: EmployeeItemProps) {
                 padding: "0.2rem 0.6rem",
                 borderRadius: "4px",
                 fontSize: "0.85rem",
-                backgroundColor: employee.category === "DEV" ? "#e3f2fd" : employee.category === "QA" ? "#f3e5f5" : "#fff3e0",
-                color: employee.category === "DEV" ? "#1976d2" : employee.category === "QA" ? "#7b1fa2" : "#e65100",
+                backgroundColor: employee.category === "DEV" ? "#e3f2fd" : employee.category === "QA" ? "#f3e5f5" : employee.category === "BA" ? "#fff3e0" : "#e8f5e9",
+                color: employee.category === "DEV" ? "#1976d2" : employee.category === "QA" ? "#7b1fa2" : employee.category === "BA" ? "#e65100" : "#2e7d32",
               }}
             >
               {employee.category}

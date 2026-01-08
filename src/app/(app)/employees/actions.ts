@@ -35,11 +35,11 @@ export async function createEmployee(formData: FormData) {
   if (!name || name.trim() === "") {
     return { error: "Name is required" };
   }
-  if (!category || !["DEV", "QA", "BA"].includes(category)) {
+  if (!category || !["DEV", "QA", "BA", "AGENTIC_AI"].includes(category)) {
     return { error: "Valid category is required" };
   }
-  if (category === "DEV" && !techStackId) {
-    return { error: "Tech stack is required for DEV employees" };
+  if ((category === "DEV" || category === "AGENTIC_AI") && !techStackId) {
+    return { error: "Tech stack is required for DEV and AGENTIC_AI employees" };
   }
   if (!grossMonthly || !netMonthly) {
     return { error: "Gross and net monthly are required" };
@@ -49,7 +49,7 @@ export async function createEmployee(formData: FormData) {
     await db.employee.create({
       data: {
         name: name.trim(),
-        category: category as "DEV" | "QA" | "BA",
+        category: category as "DEV" | "QA" | "BA" | "AGENTIC_AI",
         techStackId: techStackId || null,
         grossMonthly: new Prisma.Decimal(grossMonthly),
         netMonthly: new Prisma.Decimal(netMonthly),
@@ -89,11 +89,11 @@ export async function updateEmployee(formData: FormData) {
   if (!id || !name || name.trim() === "") {
     return { error: "ID and name are required" };
   }
-  if (!category || !["DEV", "QA", "BA"].includes(category)) {
+  if (!category || !["DEV", "QA", "BA", "AGENTIC_AI"].includes(category)) {
     return { error: "Valid category is required" };
   }
-  if (category === "DEV" && !techStackId) {
-    return { error: "Tech stack is required for DEV employees" };
+  if ((category === "DEV" || category === "AGENTIC_AI") && !techStackId) {
+    return { error: "Tech stack is required for DEV and AGENTIC_AI employees" };
   }
   if (!grossMonthly || !netMonthly) {
     return { error: "Gross and net monthly are required" };
@@ -104,7 +104,7 @@ export async function updateEmployee(formData: FormData) {
       where: { id },
       data: {
         name: name.trim(),
-        category: category as "DEV" | "QA" | "BA",
+        category: category as "DEV" | "QA" | "BA" | "AGENTIC_AI",
         techStackId: techStackId || null,
         grossMonthly: new Prisma.Decimal(grossMonthly),
         netMonthly: new Prisma.Decimal(netMonthly),

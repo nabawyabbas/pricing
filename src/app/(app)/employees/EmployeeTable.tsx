@@ -120,7 +120,7 @@ export function EmployeeTable({
       return {
         id: emp.id,
         name: emp.name,
-        category: emp.category as "DEV" | "QA" | "BA",
+        category: emp.category as "DEV" | "QA" | "BA" | "AGENTIC_AI",
         techStackId: emp.techStackId,
         grossMonthly: Number(emp.grossMonthly),
         netMonthly: Number(emp.netMonthly),
@@ -194,6 +194,7 @@ export function EmployeeTable({
     DEV: activeEmployees.filter((e) => e.category === "DEV").length,
     QA: activeEmployees.filter((e) => e.category === "QA").length,
     BA: activeEmployees.filter((e) => e.category === "BA").length,
+    AGENTIC_AI: activeEmployees.filter((e) => e.category === "AGENTIC_AI").length,
   };
 
   async function handleToggleActive(employee: typeof employees[0], newIsActive: boolean) {
@@ -239,9 +240,9 @@ export function EmployeeTable({
       const formData = new FormData(e.currentTarget);
       formData.set("id", editingEmployee.id);
       formData.set("category", editFormData.category || editingEmployee.category);
-      if (editFormData.category === "DEV" && editFormData.techStackId) {
+      if ((editFormData.category === "DEV" || editFormData.category === "AGENTIC_AI") && editFormData.techStackId) {
         formData.set("techStackId", editFormData.techStackId);
-      } else if (editFormData.category !== "DEV") {
+      } else if (editFormData.category !== "DEV" && editFormData.category !== "AGENTIC_AI") {
         formData.set("techStackId", "");
       }
       const result = await updateEmployee(formData);
@@ -291,6 +292,7 @@ export function EmployeeTable({
                   <SelectItem value="DEV">DEV</SelectItem>
                   <SelectItem value="QA">QA</SelectItem>
                   <SelectItem value="BA">BA</SelectItem>
+                  <SelectItem value="AGENTIC_AI">Agentic AI</SelectItem>
                 </SelectContent>
               </Select>
               <Select value={stackFilter} onValueChange={setStackFilter}>
@@ -350,10 +352,10 @@ export function EmployeeTable({
                       <TableCell>{employee.category}</TableCell>
                       <TableCell>{employee.techStack?.name || "-"}</TableCell>
                       <TableCell className="text-right">
-                        {formatMoney(Number(employee.grossMonthly), currency)}
+                        {formatMoney(Number(employee.grossMonthly), "EGP")}
                       </TableCell>
                       <TableCell className="text-right">
-                        {formatMoney(Number(employee.netMonthly), currency)}
+                        {formatMoney(Number(employee.netMonthly), "EGP")}
                       </TableCell>
                       <TableCell className="text-right">{formatNumber(employee.fte, 2)}</TableCell>
                       <TableCell className="text-right font-medium">
@@ -421,7 +423,7 @@ export function EmployeeTable({
                   Summary (Active Only)
                 </TableCell>
                 <TableCell colSpan={3} className="text-right">
-                  DEV: {activeCounts.DEV} | QA: {activeCounts.QA} | BA: {activeCounts.BA}
+                  DEV: {activeCounts.DEV} | QA: {activeCounts.QA} | BA: {activeCounts.BA} | Agentic AI: {activeCounts.AGENTIC_AI}
                 </TableCell>
                 <TableCell className="text-right font-semibold">
                   {formatMoney(totalActiveMonthlyCost, currency)}
@@ -460,7 +462,7 @@ export function EmployeeTable({
                       setEditFormData({
                         ...editFormData,
                         category: value,
-                        techStackId: value === "DEV" ? editFormData.techStackId : null,
+                        techStackId: (value === "DEV" || value === "AGENTIC_AI") ? editFormData.techStackId : null,
                       })
                     }
                   >
@@ -471,6 +473,7 @@ export function EmployeeTable({
                       <SelectItem value="DEV">DEV</SelectItem>
                       <SelectItem value="QA">QA</SelectItem>
                       <SelectItem value="BA">BA</SelectItem>
+                      <SelectItem value="AGENTIC_AI">Agentic AI</SelectItem>
                     </SelectContent>
                   </Select>
                   <input
@@ -479,7 +482,8 @@ export function EmployeeTable({
                     value={editFormData.category || editingEmployee.category}
                   />
                 </div>
-                {(editFormData.category === "DEV" || editingEmployee.category === "DEV") && (
+                {((editFormData.category === "DEV" || editingEmployee.category === "DEV") ||
+                  (editFormData.category === "AGENTIC_AI" || editingEmployee.category === "AGENTIC_AI")) && (
                   <div>
                     <Label htmlFor="edit-techStackId">Tech Stack *</Label>
                     <Select
@@ -487,6 +491,7 @@ export function EmployeeTable({
                       onValueChange={(value) =>
                         setEditFormData({ ...editFormData, techStackId: value })
                       }
+                      required
                     >
                       <SelectTrigger id="edit-techStackId">
                         <SelectValue placeholder="Select stack" />
@@ -519,7 +524,7 @@ export function EmployeeTable({
                   />
                 </div>
                 <div>
-                  <Label htmlFor="edit-grossMonthly">Gross Monthly ({currency}) *</Label>
+                  <Label htmlFor="edit-grossMonthly">Gross Monthly (EGP) *</Label>
                   <Input
                     id="edit-grossMonthly"
                     name="grossMonthly"
@@ -531,7 +536,7 @@ export function EmployeeTable({
                   />
                 </div>
                 <div>
-                  <Label htmlFor="edit-netMonthly">Net Monthly ({currency}) *</Label>
+                  <Label htmlFor="edit-netMonthly">Net Monthly (EGP) *</Label>
                   <Input
                     id="edit-netMonthly"
                     name="netMonthly"

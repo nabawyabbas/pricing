@@ -4,7 +4,7 @@
  * All money values are stored in EGP and converted to USD if exchange_ratio is provided
  */
 
-export type EmployeeCategory = "DEV" | "QA" | "BA";
+export type EmployeeCategory = "DEV" | "QA" | "BA" | "AGENTIC_AI";
 
 export interface Employee {
   id: string;
@@ -163,6 +163,72 @@ export function calculateFullyLoadedMonthly(
 }
 
 /**
+ * Calculate cost per releaseable hour for a category (DEV or AGENTIC_AI) in a stack
+ * monthlyCost(S) = sum(fullyLoadedMonthly of employees in stack S with category)
+ * hoursCapacity(S) = devReleasableHoursPerMonth * sum(fte of employees in stack S with category)
+ * costPerRelHour(S) = monthlyCost(S) / hoursCapacity(S)
+ *
+ * Returns null if divide-by-zero (no employees or no capacity)
+ */
+export function calculateCostPerRelHour(
+  employees: Employee[],
+  overheadTypes: OverheadType[],
+  settings: Settings
+): number | null {
+  if (employees.length === 0) {
+    return null;
+  }
+
+  const exchangeRatio = getExchangeRatio(settings);
+  const devReleasableHoursPerMonth = getSetting(
+    settings,
+    "dev_releasable_hours_per_month",
+    100
+  );
+
+  const monthlyCost = employees.reduce(
+    (sum, emp) => sum + calculateFullyLoadedMonthly(emp, overheadTypes, exchangeRatio),
+    0
+  );
+
+  const totalFte = employees.reduce((sum, emp) => sum + emp.fte, 0);
+  const hoursCapacity = devReleasableHoursPerMonth * totalFte;
+
+  if (hoursCapacity === 0) {
+    throw new Error(
+      "Cannot calculate cost per releaseable hour: hoursCapacity is zero (no FTE or dev_releasable_hours_per_month is zero)"
+    );
+  }
+
+  return monthlyCost / hoursCapacity;
+}
+
+/**
+ * Calculate per-stack hourly cost for a given category (DEV or AGENTIC_AI)
+ * This function filters employees by category and tech stack, then calculates
+ * the hourly cost using the same capacity logic (dev_releasable_hours_per_month * sum(fte))
+ *
+ * @param category - "DEV" or "AGENTIC_AI"
+ * @param techStackId - The tech stack ID to filter employees
+ * @param allEmployees - All employees (should be filtered to active only)
+ * @param overheadTypes - Overhead types (should be filtered to active only)
+ * @param settings - Settings including dev_releasable_hours_per_month
+ * @returns Hourly cost per releaseable hour, or null if no employees or no capacity
+ */
+export function calculatePerStackHourlyCostForCategory(
+  category: "DEV" | "AGENTIC_AI",
+  techStackId: string,
+  allEmployees: Employee[],
+  overheadTypes: OverheadType[],
+  settings: Settings
+): number | null {
+  const categoryEmployees = allEmployees.filter(
+    (emp) => emp.category === category && emp.techStackId === techStackId
+  );
+  return calculateCostPerRelHour(categoryEmployees, overheadTypes, settings);
+}
+
+/**
  * Calculate DEV cost per releaseable hour for a stack
  * devMonthlyCost(S) = sum(fullyLoadedMonthly of DEV in stack S)
  * devHoursCapacity(S) = devReleasableHoursPerMonth * sum(fte of DEV in stack S)
@@ -175,32 +241,7 @@ export function calculateDevCostPerRelHour(
   overheadTypes: OverheadType[],
   settings: Settings
 ): number | null {
-  if (devEmployees.length === 0) {
-    return null;
-  }
-
-  const exchangeRatio = getExchangeRatio(settings);
-  const devReleasableHoursPerMonth = getSetting(
-    settings,
-    "dev_releasable_hours_per_month",
-    100
-  );
-
-  const devMonthlyCost = devEmployees.reduce(
-    (sum, emp) => sum + calculateFullyLoadedMonthly(emp, overheadTypes, exchangeRatio),
-    0
-  );
-
-  const totalFte = devEmployees.reduce((sum, emp) => sum + emp.fte, 0);
-  const devHoursCapacity = devReleasableHoursPerMonth * totalFte;
-
-  if (devHoursCapacity === 0) {
-    throw new Error(
-      "Cannot calculate DEV cost per releaseable hour: devHoursCapacity is zero (no FTE or dev_releasable_hours_per_month is zero)"
-    );
-  }
-
-  return devMonthlyCost / devHoursCapacity;
+  return calculateCostPerRelHour(devEmployees, overheadTypes, settings);
 }
 
 /**
@@ -314,8 +355,62 @@ export function calculateFinalPrice(
 }
 
 /**
+ * Calculate pricing for a specific category (DEV or AGENTIC_AI) in a tech stack
+ * For DEV: includes QA/BA costs
+ * For AGENTIC_AI: excludes QA/BA costs
+ */
+export function calculatePricingForCategory(
+  category: "DEV" | "AGENTIC_AI",
+  techStackId: string,
+  allEmployees: Employee[],
+  overheadTypes: OverheadType[],
+  settings: Settings
+): PricingResult {
+  // Filter employees by category and tech stack
+  const categoryEmployees = allEmployees.filter(
+    (emp) => emp.category === category && emp.techStackId === techStackId
+  );
+  const qaEmployees = allEmployees.filter((emp) => emp.category === "QA");
+  const baEmployees = allEmployees.filter((emp) => emp.category === "BA");
+
+  // Calculate cost per releaseable hour for the category
+  const costPerRelHour = calculateCostPerRelHour(
+    categoryEmployees,
+    overheadTypes,
+    settings
+  );
+
+  // For DEV, include QA/BA costs; for AGENTIC_AI, exclude them
+  const qaCostPerDevRelHour =
+    category === "DEV"
+      ? calculateQaCostPerDevRelHour(qaEmployees, overheadTypes, settings)
+      : 0;
+  const baCostPerDevRelHour =
+    category === "DEV"
+      ? calculateBaCostPerDevRelHour(baEmployees, overheadTypes, settings)
+      : 0;
+
+  // Calculate releaseable cost and final price
+  const releaseableCost = calculateReleaseableCost(
+    costPerRelHour,
+    qaCostPerDevRelHour,
+    baCostPerDevRelHour
+  );
+  const finalPrice = calculateFinalPrice(releaseableCost, settings);
+
+  return {
+    devCostPerRelHour: costPerRelHour,
+    qaCostPerDevRelHour,
+    baCostPerDevRelHour,
+    releaseableCost,
+    finalPrice,
+  };
+}
+
+/**
  * Main pricing calculation function
- * Computes all pricing metrics for a tech stack
+ * Computes all pricing metrics for a tech stack (DEV category with QA/BA)
+ * @deprecated Use calculatePricingForCategory instead for category-specific pricing
  */
 export function calculatePricing(
   techStackId: string,
@@ -323,43 +418,11 @@ export function calculatePricing(
   overheadTypes: OverheadType[],
   settings: Settings
 ): PricingResult {
-  // Filter employees by category and tech stack
-  const devEmployees = allEmployees.filter(
-    (emp) => emp.category === "DEV" && emp.techStackId === techStackId
-  );
-  const qaEmployees = allEmployees.filter((emp) => emp.category === "QA");
-  const baEmployees = allEmployees.filter((emp) => emp.category === "BA");
-
-  // Calculate costs
-  const devCostPerRelHour = calculateDevCostPerRelHour(
-    devEmployees,
+  return calculatePricingForCategory(
+    "DEV",
+    techStackId,
+    allEmployees,
     overheadTypes,
     settings
   );
-  const qaCostPerDevRelHour = calculateQaCostPerDevRelHour(
-    qaEmployees,
-    overheadTypes,
-    settings
-  );
-  const baCostPerDevRelHour = calculateBaCostPerDevRelHour(
-    baEmployees,
-    overheadTypes,
-    settings
-  );
-
-  // Calculate releaseable cost and final price
-  const releaseableCost = calculateReleaseableCost(
-    devCostPerRelHour,
-    qaCostPerDevRelHour,
-    baCostPerDevRelHour
-  );
-  const finalPrice = calculateFinalPrice(releaseableCost, settings);
-
-  return {
-    devCostPerRelHour,
-    qaCostPerDevRelHour,
-    baCostPerDevRelHour,
-    releaseableCost,
-    finalPrice,
-  };
 }

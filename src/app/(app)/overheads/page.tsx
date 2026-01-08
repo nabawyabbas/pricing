@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { OverheadTypesList } from "./OverheadTypesList";
 import { EnhancedAllocationGrid } from "./EnhancedAllocationGrid";
+import { type Settings } from "@/lib/pricing";
 
 async function getOverheadTypes() {
   return await db.overheadType.findMany({
@@ -27,9 +28,28 @@ async function getEmployees() {
   });
 }
 
+async function getSettings(): Promise<Settings> {
+  const settings = await db.setting.findMany();
+  const settingsMap: Settings = {};
+  settings.forEach((setting) => {
+    if (setting.valueType === "float" || setting.valueType === "number") {
+      settingsMap[setting.key] = Number.parseFloat(setting.value);
+    } else if (setting.valueType === "integer") {
+      settingsMap[setting.key] = Number.parseInt(setting.value, 10);
+    } else if (setting.valueType === "boolean") {
+      settingsMap[setting.key] = setting.value === "true" ? 1 : 0;
+    } else {
+      const parsed = Number.parseFloat(setting.value);
+      settingsMap[setting.key] = isNaN(parsed) ? 0 : parsed;
+    }
+  });
+  return settingsMap;
+}
+
 export default async function OverheadsPage() {
   const overheadTypes = await getOverheadTypes();
   const employees = await getEmployees();
+  const settings = await getSettings();
 
   // Filter to active items for calculations
   const activeOverheadTypes = overheadTypes.filter((t) => t.isActive);
@@ -68,6 +88,7 @@ export default async function OverheadsPage() {
             overheadTypes={overheadTypes}
             totalsByType={totalsByType}
             missingAllocationsByType={missingAllocationsByType}
+            settings={settings}
           />
         </div>
 

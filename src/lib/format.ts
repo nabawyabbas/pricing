@@ -61,3 +61,13 @@ export function formatNumberLocale(value: number | null, decimals: number = 0): 
   });
 }
 
+/**
+ * Format a percentage value with 1 decimal place
+ * @param value - The percentage value (0-100, not decimal)
+ * @returns Formatted string with % symbol and 1 decimal place, or "—" if value is null/NaN
+ */
+export function formatPct(value: number | null): string {
+  if (value === null || isNaN(value)) return "—";
+  return `${value.toFixed(1)}%`;
+}
+

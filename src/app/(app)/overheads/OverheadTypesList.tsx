@@ -40,6 +40,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { Prisma } from "@prisma/client";
 import {
   createOverheadType,
@@ -142,21 +143,25 @@ export function OverheadTypesList({
     });
   }
 
-  async function handleToggleActive(type: typeof overheadTypes[0]) {
+  async function handleToggleActiveSwitch(type: typeof overheadTypes[0], checked: boolean) {
     startTransition(async () => {
       const formData = new FormData();
       formData.set("id", type.id);
-      formData.set("isActive", (!type.isActive).toString());
+      formData.set("isActive", checked.toString());
       const result = await toggleOverheadTypeActive(formData);
       if (result?.error) {
         toast.error(result.error);
       } else {
         toast.success(
-          `Overhead type "${type.name}" ${type.isActive ? "deactivated" : "activated"}`
+          `Overhead type "${type.name}" ${checked ? "activated" : "deactivated"}`
         );
         router.refresh();
       }
     });
+  }
+
+  async function handleToggleActive(type: typeof overheadTypes[0]) {
+    handleToggleActiveSwitch(type, !type.isActive);
   }
 
   const displayTypes = showInactive ? overheadTypes : activeTypes;
@@ -327,9 +332,11 @@ export function OverheadTypesList({
                         )}
                       </TableCell>
                       <TableCell className="text-center">
-                        <Badge variant={type.isActive ? "default" : "secondary"}>
-                          {type.isActive ? "Active" : "Inactive"}
-                        </Badge>
+                        <Switch
+                          checked={type.isActive}
+                          onCheckedChange={(checked) => handleToggleActiveSwitch(type, checked)}
+                          disabled={isPending}
+                        />
                       </TableCell>
                       <TableCell>
                         <DropdownMenu>

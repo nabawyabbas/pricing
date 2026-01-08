@@ -4,9 +4,8 @@
 Compute cost and price per "releaseable development hour" per tech stack.
 
 Releaseable hour composition:
-- 1.0 Dev hour
-- 0.5 QA hour
-- 0.25 BA hour
+- DEV releaseable hour = 1.0 DEV + qaRatio * QA + baRatio * BA
+- AGENTIC_AI releaseable hour = 1.0 AGENTIC_AI (NO QA/BA add-ons)
 
 ## Inputs (MVP)
 ### Tech Stacks
@@ -14,8 +13,11 @@ Releaseable hour composition:
 
 ### Employees
 - name
-- category: DEV | QA | BA
-- techStackId (required for DEV, optional for QA/BA)
+- category: DEV | QA | BA | AGENTIC_AI
+- techStackId:
+  - required for DEV and AGENTIC_AI
+  - optional for QA/BA
+- isActive (boolean, default true)
 - grossMonthly (number)
 - netMonthly (number, informational)
 - oncostRate (percent of gross, optional)
@@ -40,8 +42,9 @@ Example settings:
 
 ### Overhead Types
 - name (string, e.g., "Management", "Company", "Infrastructure")
+- isActive (boolean, default true)
 - amount (money)
-- period (enum: "annual" | "monthly" | "quarterly")
+- period (enum OverheadPeriod: "annual" | "monthly" | "quarterly")
 
 ### Overhead Allocation (per employee)
 - employeeId (reference to Employee)
@@ -54,7 +57,10 @@ annualBase = grossMonthly*12 + grossMonthly*12*oncostRate + annualBenefits + ann
 
 Allocated overhead to employee (monthly):
 For each OverheadAllocation for the employee:
-  overheadMonthly = overheadType.amount / (12 if period="annual", 1 if period="monthly", 4 if period="quarterly")
+  overheadMonthly =
+    overheadType.amount / 12   if period="annual"
+    overheadType.amount / 1    if period="monthly"
+    overheadType.amount / 4    if period="quarterly"
   allocatedOverheadMonthly += overheadMonthly * share
 
 allocatedOverheadMonthly = sum(overheadMonthly * share for each allocated overhead type)
@@ -95,9 +101,59 @@ releaseableCost(S) = devCostPerRelHour(S) + qaCostPerDevRelHour + baCostPerDevRe
 Final price:
 finalPrice(S) = releaseableCost(S) * (1 + margin) * (1 + risk)
 
+Raw monthly cost (NO overhead allocations):
+rawMonthly = grossMonthly*(1+oncostRate) + (annualBenefits/12) + (annualBonus/12)
+
+DEV raw cost per releaseable hour for stack S:
+devRawMonthly(S) = sum(rawMonthly of active DEV in stack S)
+devHoursCapacity(S) = devReleasableHoursPerMonth * sum(fte of active DEV in stack S)
+devRawCostPerRelHour(S) = devRawMonthly(S) / devHoursCapacity(S)
+
+QA raw add-on per releaseable hour:
+qaRawMonthly = sum(rawMonthly of active QA)
+qaRawPerQaHour = qaRawMonthly / standardHoursPerMonth
+qaRawAddOnPerRelHour = qaRatio * qaRawPerQaHour
+
+BA raw add-on per releaseable hour:
+baRawMonthly = sum(rawMonthly of active BA)
+baRawPerBaHour = baRawMonthly / standardHoursPerMonth
+baRawAddOnPerRelHour = baRatio * baRawPerBaHour
+
+DEV COGS per releaseable hour (per stack S):
+COGS(S) = devRawCostPerRelHour(S) + qaRawAddOnPerRelHour + baRawAddOnPerRelHour
+
+Overheads per releaseable hour (DEV stack S):
+devOverheadsPerRelHour(S) = devCostPerRelHour(S) - devRawCostPerRelHour(S)
+
+Total releaseable cost per hour (DEV stack S):
+totalReleaseableCost(S) = COGS(S) + devOverheadsPerRelHour(S)
+
+Percent of total for any component X:
+pct(X) = X / totalReleaseableCost(S)
+
+AGENTIC_AI cost per releaseable hour for stack S:
+agenticMonthlyCost(S) = sum(fullyLoadedMonthly of active AGENTIC_AI in stack S)
+agenticHoursCapacity(S) = devReleasableHoursPerMonth * sum(fte of active AGENTIC_AI in stack S)
+agenticCostPerRelHour(S) = agenticMonthlyCost(S) / agenticHoursCapacity(S)
+
+AGENTIC_AI raw cost per releaseable hour for stack S:
+agenticRawMonthly(S) = sum(rawMonthly of active AGENTIC_AI in stack S)
+agenticRawCostPerRelHour(S) = agenticRawMonthly(S) / agenticHoursCapacity(S)
+
+AGENTIC_AI total releaseable cost per hour:
+agenticTotalReleaseableCost(S) = agenticCostPerRelHour(S)
+
+### Active-only rule
+- All calculations include ONLY:
+  - Employees where isActive=true
+  - OverheadTypes where isActive=true
+- Inactive records may be shown in UI (optional) but are excluded from calculations by default.
+
 ## Pages (MVP)
 - /stacks (CRUD)
 - /employees (CRUD)
 - /overheads (CRUD for OverheadType, allocation table per employee with overheadTypeId and share)
 - /settings (edit settings by group, key-value editor)
-- /results (per-stack: dev rate, QA rate, BA rate, releaseable cost, final price + explain breakdown)
+- /results:
+  - DEV table per stack: Dev Cost, QA Add-on, BA Add-on, COGS, overhead-by-type columns, Total Overheads/hr, Total Releaseable Cost/hr, Final Price/hr, and % of total for each component
+  - AGENTIC_AI table per stack: Agentic Cost, overhead-by-type columns, Total Overheads/hr, Total Releaseable Cost/hr, Final Price/hr, and % of total

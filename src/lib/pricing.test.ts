@@ -6,6 +6,7 @@ import {
   calculateQaCostPerDevRelHour,
   calculateBaCostPerDevRelHour,
   calculateReleaseableCost,
+  calculateAnnualBase,
   type Employee,
   type OverheadType,
   type Settings,
@@ -655,6 +656,92 @@ describe("pricing calculations", () => {
       expect(resultHighBa.finalPrice).not.toBeNull();
       expect(resultLowBa.finalPrice).not.toBeCloseTo(resultHighBa.finalPrice!, 2);
       expect(resultLowBa.baCostPerDevRelHour).toBeLessThan(resultHighBa.baCostPerDevRelHour);
+    });
+  });
+
+  describe("annual_increase setting", () => {
+    it("should increase annualBase by 10% on gross part when annual_increase=0.10", () => {
+      const employee = createDevEmployee("stack-1", 10000, 1.0);
+      const settingsWithIncrease: Settings = {
+        ...baseSettings,
+        annual_increase: 0.10,
+      };
+      const settingsWithoutIncrease: Settings = {
+        ...baseSettings,
+        annual_increase: 0,
+      };
+
+      // Calculate annual base with and without increase
+      const annualBaseWithIncrease = calculateAnnualBase(employee, null, 0.10);
+      const annualBaseWithoutIncrease = calculateAnnualBase(employee, null, 0);
+
+      // Expected: grossMonthly * 12 * (1 + 0.1) = 10000 * 12 * 1.1 = 132000
+      // Without: grossMonthly * 12 = 10000 * 12 = 120000
+      // Oncost: 0.1 * grossAnnual, so it also increases
+      // Benefits and bonus don't change
+      const expectedGrossAnnualWithIncrease = 10000 * 12 * 1.1; // 132000
+      const expectedGrossAnnualWithoutIncrease = 10000 * 12; // 120000
+      const expectedOncostWithIncrease = expectedGrossAnnualWithIncrease * 0.1; // 13200
+      const expectedOncostWithoutIncrease = expectedGrossAnnualWithoutIncrease * 0.1; // 12000
+      const benefits = 5000;
+      const bonus = 10000;
+
+      const expectedAnnualBaseWithIncrease =
+        expectedGrossAnnualWithIncrease + expectedOncostWithIncrease + benefits + bonus;
+      const expectedAnnualBaseWithoutIncrease =
+        expectedGrossAnnualWithoutIncrease + expectedOncostWithoutIncrease + benefits + bonus;
+
+      expect(annualBaseWithIncrease).toBeCloseTo(expectedAnnualBaseWithIncrease, 2);
+      expect(annualBaseWithoutIncrease).toBeCloseTo(expectedAnnualBaseWithoutIncrease, 2);
+      expect(annualBaseWithIncrease).toBeGreaterThan(annualBaseWithoutIncrease);
+    });
+
+    it("should have no effect when annual_increase=0", () => {
+      const employee = createDevEmployee("stack-1", 10000, 1.0);
+      const settingsWithZero: Settings = {
+        ...baseSettings,
+        annual_increase: 0,
+      };
+
+      const annualBaseWithZero = calculateAnnualBase(employee, null, 0);
+      const annualBaseDefault = calculateAnnualBase(employee, null); // default is 0
+
+      // Should be the same
+      expect(annualBaseWithZero).toBeCloseTo(annualBaseDefault, 2);
+    });
+
+    it("should affect pricing calculations when annual_increase is set", () => {
+      const devEmployee = createDevEmployee("stack-1", 10000, 1.0);
+      const settingsWithIncrease: Settings = {
+        ...baseSettings,
+        annual_increase: 0.10,
+      };
+      const settingsWithoutIncrease: Settings = {
+        ...baseSettings,
+        annual_increase: 0,
+      };
+
+      const resultWithIncrease = calculatePricingForCategory(
+        "DEV",
+        "stack-1",
+        [devEmployee],
+        baseOverheadTypes,
+        settingsWithIncrease
+      );
+      const resultWithoutIncrease = calculatePricingForCategory(
+        "DEV",
+        "stack-1",
+        [devEmployee],
+        baseOverheadTypes,
+        settingsWithoutIncrease
+      );
+
+      // With 10% increase, the dev cost per hour should be higher
+      expect(resultWithIncrease.devCostPerRelHour).not.toBeNull();
+      expect(resultWithoutIncrease.devCostPerRelHour).not.toBeNull();
+      expect(resultWithIncrease.devCostPerRelHour!).toBeGreaterThan(
+        resultWithoutIncrease.devCostPerRelHour!
+      );
     });
   });
 });

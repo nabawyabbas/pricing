@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import {
@@ -22,6 +23,7 @@ import {
   allocateEqually,
   allocateProportionalToGross,
   normalizeTo100Percent,
+  toggleEmployeeActive,
 } from "./actions";
 import { toast } from "sonner";
 import { formatMoney, formatPercent, formatNumber } from "@/lib/format";
@@ -196,40 +198,63 @@ export function EnhancedAllocationGrid({
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Note about calculations */}
+        {showInactive && (inactiveEmployeeCount > 0 || inactiveOverheadCount > 0) && (
+          <div className="p-3 bg-muted rounded-md text-sm text-muted-foreground">
+            <strong>Note:</strong> Calculations (allocation sums, missing allocations) use only ACTIVE employees and ACTIVE overhead types. Inactive items are shown for reference only.
+          </div>
+        )}
+
         {/* Per-overhead metrics */}
         {displayOverheadTypes.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {displayOverheadTypes.map((type) => {
-              const total = totalsByType.get(type.id) ?? 0;
-              const missing = missingAllocationsByType.get(type.id) ?? 0;
-              const isWarning = Math.abs(total - 1) > 0.01;
+              const isTypeActive = type.isActive;
+              const total = isTypeActive ? (totalsByType.get(type.id) ?? 0) : 0;
+              const missing = isTypeActive ? (missingAllocationsByType.get(type.id) ?? 0) : 0;
+              const isWarning = isTypeActive && Math.abs(total - 1) > 0.01;
 
               return (
                 <div
                   key={type.id}
                   className={`p-4 border rounded-md ${
-                    isWarning
-                      ? "border-yellow-500 bg-yellow-50 dark:bg-yellow-950"
-                      : "border-green-500 bg-green-50 dark:bg-green-950"
+                    isTypeActive
+                      ? isWarning
+                        ? "border-yellow-500 bg-yellow-50 dark:bg-yellow-950"
+                        : "border-green-500 bg-green-50 dark:bg-green-950"
+                      : "border-muted bg-muted/30"
                   }`}
                 >
-                  <div className="font-semibold mb-2">{type.name}</div>
+                  <div className="font-semibold mb-2">
+                    {type.name}
+                    {!isTypeActive && (
+                      <span className="text-muted-foreground text-sm ml-2">
+                        (Inactive - excluded from calculations)
+                      </span>
+                    )}
+                  </div>
                   <div className="text-sm space-y-1">
-                    <div>
-                      Allocation Sum:{" "}
-                        <span
-                          className={
-                            isWarning ? "text-destructive font-medium" : "text-green-600 font-medium"
-                          }
-                        >
-                          {formatPercent(total, "decimal")}
-                        </span>
-                    </div>
-                    <div>
-                      Missing Allocations: <span className="font-medium">{missing}</span> employee(s)
-                    </div>
-                    {isWarning && (
-                      <div className="text-xs text-yellow-600 mt-1">⚠️ Should sum to 100%</div>
+                    {isTypeActive ? (
+                      <>
+                        <div>
+                          Allocation Sum:{" "}
+                          <span
+                            className={
+                              isWarning ? "text-destructive font-medium" : "text-green-600 font-medium"
+                            }
+                          >
+                            {formatPercent(total, "decimal")}
+                          </span>
+                        </div>
+                        <div>
+                          Missing Allocations: <span className="font-medium">{missing}</span> employee(s)
+                        </div>
+                        {isWarning && (
+                          <div className="text-xs text-yellow-600 mt-1">⚠️ Should sum to 100%</div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="text-muted-foreground italic">Excluded from calculations</div>
                     )}
                   </div>
                 </div>
@@ -326,9 +351,26 @@ export function EnhancedAllocationGrid({
                         {formatMoney(Number(employee.grossMonthly), "EGP")}
                       </TableCell>
                       <TableCell className="text-center">
-                        <Badge variant={employee.isActive ? "default" : "secondary"}>
-                          {employee.isActive ? "Active" : "Inactive"}
-                        </Badge>
+                        <Switch
+                          checked={employee.isActive}
+                          onCheckedChange={(checked) => {
+                            startTransition(async () => {
+                              const formData = new FormData();
+                              formData.set("id", employee.id);
+                              formData.set("isActive", checked.toString());
+                              const result = await toggleEmployeeActive(formData);
+                              if (result?.error) {
+                                toast.error(result.error);
+                              } else {
+                                toast.success(
+                                  `Employee "${employee.name}" ${checked ? "activated" : "deactivated"}`
+                                );
+                                router.refresh();
+                              }
+                            });
+                          }}
+                          disabled={isPending}
+                        />
                       </TableCell>
                       {displayOverheadTypes.map((type) => {
                         const share = getShare(employee.id, type.id);

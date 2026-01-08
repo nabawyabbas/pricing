@@ -3,6 +3,7 @@
 import { db } from "@/lib/db";
 import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
+import { getAdjustedGrossMonthly } from "@/lib/pricing";
 
 function parseDecimal(value: string | null): Prisma.Decimal | null {
   if (!value || value.trim() === "") return null;
@@ -235,6 +236,18 @@ export async function allocateEqually(overheadTypeId: string) {
 
 export async function allocateProportionalToGross(overheadTypeId: string) {
   try {
+    // Get annual_increase setting
+    const annualIncreaseSetting = await db.setting.findUnique({
+      where: { key: "annual_increase" },
+    });
+    const annualIncrease =
+      annualIncreaseSetting?.valueType === "float" || annualIncreaseSetting?.valueType === "number"
+        ? Number.parseFloat(annualIncreaseSetting.value)
+        : annualIncreaseSetting?.valueType === "integer"
+        ? Number.parseInt(annualIncreaseSetting.value, 10)
+        : 0;
+    const annualIncreaseValue = Number.isFinite(annualIncrease) ? annualIncrease : 0;
+
     // Only allocate to active employees
     const employees = await db.employee.findMany({
       where: { isActive: true },
@@ -244,18 +257,44 @@ export async function allocateProportionalToGross(overheadTypeId: string) {
       return { error: "No active employees found" };
     }
 
-    // Calculate total gross monthly
-    const totalGross = employees.reduce((sum, emp) => {
-      return sum + Number(emp.grossMonthly);
+    // Calculate total adjusted gross monthly
+    const totalAdjustedGross = employees.reduce((sum, emp) => {
+      const employeeForCalc = {
+        id: emp.id,
+        name: emp.name,
+        category: emp.category as "DEV" | "QA" | "BA" | "AGENTIC_AI",
+        techStackId: emp.techStackId,
+        grossMonthly: Number(emp.grossMonthly),
+        netMonthly: Number(emp.netMonthly),
+        oncostRate: emp.oncostRate,
+        annualBenefits: emp.annualBenefits ? Number(emp.annualBenefits) : null,
+        annualBonus: emp.annualBonus ? Number(emp.annualBonus) : null,
+        fte: emp.fte,
+      };
+      const adjustedGross = getAdjustedGrossMonthly(employeeForCalc, annualIncreaseValue);
+      return sum + adjustedGross;
     }, 0);
 
-    if (totalGross === 0) {
-      return { error: "Total gross monthly is zero" };
+    if (totalAdjustedGross === 0) {
+      return { error: "Total adjusted gross monthly is zero" };
     }
 
     await db.$transaction(
       employees.map((emp) => {
-        const share = Number(emp.grossMonthly) / totalGross;
+        const employeeForCalc = {
+          id: emp.id,
+          name: emp.name,
+          category: emp.category as "DEV" | "QA" | "BA" | "AGENTIC_AI",
+          techStackId: emp.techStackId,
+          grossMonthly: Number(emp.grossMonthly),
+          netMonthly: Number(emp.netMonthly),
+          oncostRate: emp.oncostRate,
+          annualBenefits: emp.annualBenefits ? Number(emp.annualBenefits) : null,
+          annualBonus: emp.annualBonus ? Number(emp.annualBonus) : null,
+          fte: emp.fte,
+        };
+        const adjustedGross = getAdjustedGrossMonthly(employeeForCalc, annualIncreaseValue);
+        const share = adjustedGross / totalAdjustedGross;
         return db.overheadAllocation.upsert({
           where: {
             employeeId_overheadTypeId: {
@@ -321,5 +360,31 @@ export async function normalizeTo100Percent(overheadTypeId: string) {
     return { success: true };
   } catch (error: any) {
     return { error: "Failed to normalize allocations" };
+  }
+}
+
+// Employee toggle active (for use in overheads page)
+export async function toggleEmployeeActive(formData: FormData) {
+  const id = formData.get("id") as string;
+  const isActive = formData.get("isActive") as string;
+
+  if (!id) {
+    return { error: "ID is required" };
+  }
+
+  try {
+    await db.employee.update({
+      where: { id },
+      data: {
+        isActive: parseBoolean(isActive),
+      },
+    });
+    revalidatePath("/overheads");
+    return { success: true };
+  } catch (error: any) {
+    if (error.code === "P2025") {
+      return { error: "Employee not found" };
+    }
+    return { error: "Failed to update employee status" };
   }
 }

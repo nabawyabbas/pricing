@@ -29,7 +29,7 @@ export function ResetDefaultsButton() {
         <CardTitle>Reset Core Defaults</CardTitle>
         <CardDescription>
           Reset core settings to defaults: Dev Hours = 100, Standard Hours = 160, QA Ratio = 0.5,
-          BA Ratio = 0.25
+          BA Ratio = 0.25, Annual Increase = 0.10 (10%)
         </CardDescription>
       </CardHeader>
       <CardContent>

@@ -59,6 +59,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
     group: "Pricing",
     required: false,
   },
+  annual_increase: {
+    label: "Annual Increase",
+    description: "Annual salary increase rate applied to gross monthly salary (e.g., 0.10 = 10%)",
+    inputType: "percent",
+    group: "Pricing",
+    required: false,
+  },
 };
 
 export const REQUIRED_SETTINGS = [
@@ -75,5 +82,6 @@ export const CORE_DEFAULTS = {
   standard_hours_per_month: "160",
   qa_ratio: "0.5",
   ba_ratio: "0.25",
+  annual_increase: "0.10",
 };
 

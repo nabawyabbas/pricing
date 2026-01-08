@@ -15,10 +15,14 @@ import {
   isAllocationValid,
   findMissingSettings,
   convertToMonthly,
+  computeDevStackRow,
+  computeAgenticStackRow,
+  computeGlobalQaAddOnPerReleaseHr,
+  computeGlobalBaAddOnPerReleaseHr,
 } from "@/lib/dashboard";
 import { calculateFullyLoadedMonthly } from "@/lib/pricing";
 import { Prisma } from "@prisma/client";
-import { formatMoney, formatPercent, formatNumber, type Currency } from "@/lib/format";
+import { formatMoney, formatPercent, formatNumber, formatPct, type Currency } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -171,18 +175,24 @@ export default async function DashboardPage() {
   const inactiveBaEmployees = inactiveEmployees.filter((e) => e.category === "BA");
   const inactiveAgenticAiEmployees = inactiveEmployees.filter((e) => e.category === "AGENTIC_AI");
 
+  // Helper to get setting with default
+  function getSetting(settings: Settings, key: string, defaultValue: number): number {
+    return settings[key] ?? defaultValue;
+  }
+
   // Calculate active monthly costs by category
-  const activeDevMonthlyCost = calculateTotalMonthlyCost(activeDevEmployees, activeOverheadTypes, exchangeRatio);
-  const activeQaMonthlyCost = calculateTotalMonthlyCost(activeQaEmployees, activeOverheadTypes, exchangeRatio);
-  const activeBaMonthlyCost = calculateTotalMonthlyCost(activeBaEmployees, activeOverheadTypes, exchangeRatio);
-  const activeAgenticAiMonthlyCost = calculateTotalMonthlyCost(activeAgenticAiEmployees, activeOverheadTypes, exchangeRatio);
+  const annualIncrease = getSetting(settings, "annual_increase", 0);
+  const activeDevMonthlyCost = calculateTotalMonthlyCost(activeDevEmployees, activeOverheadTypes, exchangeRatio, annualIncrease);
+  const activeQaMonthlyCost = calculateTotalMonthlyCost(activeQaEmployees, activeOverheadTypes, exchangeRatio, annualIncrease);
+  const activeBaMonthlyCost = calculateTotalMonthlyCost(activeBaEmployees, activeOverheadTypes, exchangeRatio, annualIncrease);
+  const activeAgenticAiMonthlyCost = calculateTotalMonthlyCost(activeAgenticAiEmployees, activeOverheadTypes, exchangeRatio, annualIncrease);
   const totalActiveMonthlyCost = activeDevMonthlyCost + activeQaMonthlyCost + activeBaMonthlyCost + activeAgenticAiMonthlyCost;
 
   // Calculate inactive monthly costs by category
-  const inactiveDevMonthlyCost = calculateTotalMonthlyCost(inactiveDevEmployees, activeOverheadTypes, exchangeRatio);
-  const inactiveQaMonthlyCost = calculateTotalMonthlyCost(inactiveQaEmployees, activeOverheadTypes, exchangeRatio);
-  const inactiveBaMonthlyCost = calculateTotalMonthlyCost(inactiveBaEmployees, activeOverheadTypes, exchangeRatio);
-  const inactiveAgenticAiMonthlyCost = calculateTotalMonthlyCost(inactiveAgenticAiEmployees, activeOverheadTypes, exchangeRatio);
+  const inactiveDevMonthlyCost = calculateTotalMonthlyCost(inactiveDevEmployees, activeOverheadTypes, exchangeRatio, annualIncrease);
+  const inactiveQaMonthlyCost = calculateTotalMonthlyCost(inactiveQaEmployees, activeOverheadTypes, exchangeRatio, annualIncrease);
+  const inactiveBaMonthlyCost = calculateTotalMonthlyCost(inactiveBaEmployees, activeOverheadTypes, exchangeRatio, annualIncrease);
+  const inactiveAgenticAiMonthlyCost = calculateTotalMonthlyCost(inactiveAgenticAiEmployees, activeOverheadTypes, exchangeRatio, annualIncrease);
   const totalInactiveMonthlyCost = inactiveDevMonthlyCost + inactiveQaMonthlyCost + inactiveBaMonthlyCost + inactiveAgenticAiMonthlyCost;
 
   // Calculate KPIs (only active items)
@@ -226,7 +236,7 @@ export default async function DashboardPage() {
       );
       const devFte = stackDevs.reduce((sum, emp) => sum + emp.fte, 0);
       const devMonthlyCost = stackDevs.reduce(
-        (sum, emp) => sum + calculateFullyLoadedMonthly(emp, activeOverheadTypes, exchangeRatio),
+        (sum, emp) => sum + calculateFullyLoadedMonthly(emp, activeOverheadTypes, exchangeRatio, annualIncrease),
         0
       );
       results.push({
@@ -250,7 +260,7 @@ export default async function DashboardPage() {
       );
       const agenticAiFte = stackAgenticAi.reduce((sum, emp) => sum + emp.fte, 0);
       const agenticAiMonthlyCost = stackAgenticAi.reduce(
-        (sum, emp) => sum + calculateFullyLoadedMonthly(emp, activeOverheadTypes, exchangeRatio),
+        (sum, emp) => sum + calculateFullyLoadedMonthly(emp, activeOverheadTypes, exchangeRatio, annualIncrease),
         0
       );
       results.push({
@@ -575,6 +585,249 @@ export default async function DashboardPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Compute global QA/BA add-ons once */}
+      {(() => {
+        const qaAddOn = computeGlobalQaAddOnPerReleaseHr(activeQaEmployees, activeOverheadTypes, settings);
+        const baAddOn = computeGlobalBaAddOnPerReleaseHr(activeBaEmployees, activeOverheadTypes, settings);
+
+        return (
+          <>
+            {/* DEV Releaseable Hour Breakdown */}
+            <Card>
+              <CardHeader>
+                <CardTitle>DEV Releaseable Hour Breakdown (per hr)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {activeOverheadTypes.length === 0 ? (
+                  <p className="text-muted-foreground italic">No active overhead types found.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="sticky left-0 bg-background z-10">Stack</TableHead>
+                          <TableHead className="text-right">Dev Cost</TableHead>
+                          <TableHead className="text-right font-semibold">QA Add-on/hr</TableHead>
+                          <TableHead className="text-right font-semibold">BA Add-on/hr</TableHead>
+                          <TableHead className="text-right font-semibold">COGS</TableHead>
+                          {activeOverheadTypes.map((type) => {
+                            const allocationSum = getOverheadAllocationSum(type.id, activeEmployees);
+                            const isValid = isAllocationValid(allocationSum);
+                            return (
+                              <TableHead key={type.id} className="text-right">
+                                <div className="flex flex-col items-end">
+                                  <span className="font-medium">{type.name}</span>
+                                  {!isValid && (
+                                    <span className="text-xs text-destructive">⚠️ {formatPercent(allocationSum, "decimal")}</span>
+                                  )}
+                                </div>
+                              </TableHead>
+                            );
+                          })}
+                          <TableHead className="text-right font-semibold">Total Overheads/hr</TableHead>
+                          <TableHead className="text-right font-semibold">Total Releaseable Cost/hr</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {techStacks.map((stack) => {
+                          const stackDevs = devByStack.get(stack.id) || [];
+                          const rowData = computeDevStackRow(
+                            stack.id,
+                            stackDevs,
+                            activeOverheadTypes,
+                            qaAddOn.total,
+                            baAddOn.total,
+                            settings
+                          );
+
+                          if (!rowData) {
+                            return null;
+                          }
+
+                          const totalReleaseableCost = rowData.totalReleaseableCost;
+                          
+                          // Calculate COGS = DevCost + QAAddOnHr + BAAddOnHr
+                          const devCost = rowData.rawCost ?? 0;
+                          const cogs = devCost + rowData.qaAddOn + rowData.baAddOn;
+                          
+                          // Calculate percentages for each component
+                          const calculatePct = (component: number | null): number | null => {
+                            if (totalReleaseableCost === null || totalReleaseableCost === 0 || component === null) {
+                              return null;
+                            }
+                            return (component / totalReleaseableCost) * 100;
+                          };
+
+                          return (
+                            <TableRow key={stack.id}>
+                              <TableCell className="sticky left-0 bg-background z-10 font-medium">{stack.name}</TableCell>
+                              <TableCell className="text-right">
+                                <div className="flex flex-col items-end">
+                                  <span>{rowData.rawCost !== null ? formatMoney(rowData.rawCost, currency) : "—"}</span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {formatPct(calculatePct(rowData.rawCost))}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-right font-semibold">
+                                <div className="flex flex-col items-end">
+                                  <span>{formatMoney(rowData.qaAddOn, currency)}</span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {formatPct(calculatePct(rowData.qaAddOn))}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-right font-semibold">
+                                <div className="flex flex-col items-end">
+                                  <span>{formatMoney(rowData.baAddOn, currency)}</span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {formatPct(calculatePct(rowData.baAddOn))}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-right font-semibold">
+                                <div className="flex flex-col items-end">
+                                  <span>{formatMoney(cogs, currency)}</span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {formatPct(calculatePct(cogs))}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              {rowData.overheads.map((overhead, ohIdx) => (
+                                <TableCell key={activeOverheadTypes[ohIdx].id} className="text-right">
+                                  <div className="flex flex-col items-end">
+                                    <span>{overhead !== null ? formatMoney(overhead, currency) : "—"}</span>
+                                    <span className="text-xs text-muted-foreground">
+                                      {formatPct(calculatePct(overhead))}
+                                    </span>
+                                  </div>
+                                </TableCell>
+                              ))}
+                              <TableCell className="text-right font-semibold">
+                                <div className="flex flex-col items-end">
+                                  <span>{formatMoney(rowData.totalOverheads, currency)}</span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {formatPct(calculatePct(rowData.totalOverheads))}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-right font-semibold">
+                                {totalReleaseableCost !== null
+                                  ? formatMoney(totalReleaseableCost, currency)
+                                  : "—"}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* AGENTIC_AI Releaseable Hour Breakdown */}
+            {agenticAiByStack.size > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>AGENTIC_AI Releaseable Hour Breakdown (per hr)</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="sticky left-0 bg-background z-10">Stack</TableHead>
+                          <TableHead className="text-right">Raw Cost/hr</TableHead>
+                          {activeOverheadTypes.map((type) => {
+                            const allocationSum = getOverheadAllocationSum(type.id, activeEmployees);
+                            const isValid = isAllocationValid(allocationSum);
+                            return (
+                              <TableHead key={type.id} className="text-right">
+                                <div className="flex flex-col items-end">
+                                  <span className="font-medium">{type.name}</span>
+                                  {!isValid && (
+                                    <span className="text-xs text-destructive">⚠️ {formatPercent(allocationSum, "decimal")}</span>
+                                  )}
+                                </div>
+                              </TableHead>
+                            );
+                          })}
+                          <TableHead className="text-right font-semibold">Total Overheads/hr</TableHead>
+                          <TableHead className="text-right font-semibold">Total Releaseable Cost/hr</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {techStacks.map((stack) => {
+                          const stackAgenticAi = agenticAiByStack.get(stack.id) || [];
+                          const rowData = computeAgenticStackRow(
+                            stack.id,
+                            stackAgenticAi,
+                            activeOverheadTypes,
+                            settings
+                          );
+
+                          if (!rowData) {
+                            return null;
+                          }
+
+                          const totalReleaseableCost = rowData.totalReleaseableCost;
+                          
+                          // Calculate percentages for each component
+                          const calculatePct = (component: number | null): number | null => {
+                            if (totalReleaseableCost === null || totalReleaseableCost === 0 || component === null) {
+                              return null;
+                            }
+                            return (component / totalReleaseableCost) * 100;
+                          };
+
+                          return (
+                            <TableRow key={stack.id}>
+                              <TableCell className="sticky left-0 bg-background z-10 font-medium">{stack.name}</TableCell>
+                              <TableCell className="text-right">
+                                <div className="flex flex-col items-end">
+                                  <span>{rowData.rawCost !== null ? formatMoney(rowData.rawCost, currency) : "—"}</span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {formatPct(calculatePct(rowData.rawCost))}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              {rowData.overheads.map((overhead, ohIdx) => (
+                                <TableCell key={activeOverheadTypes[ohIdx].id} className="text-right">
+                                  <div className="flex flex-col items-end">
+                                    <span>{overhead !== null ? formatMoney(overhead, currency) : "—"}</span>
+                                    <span className="text-xs text-muted-foreground">
+                                      {formatPct(calculatePct(overhead))}
+                                    </span>
+                                  </div>
+                                </TableCell>
+                              ))}
+                              <TableCell className="text-right font-semibold">
+                                <div className="flex flex-col items-end">
+                                  <span>{formatMoney(rowData.totalOverheads, currency)}</span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {formatPct(calculatePct(rowData.totalOverheads))}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-right font-semibold">
+                                {totalReleaseableCost !== null
+                                  ? formatMoney(totalReleaseableCost, currency)
+                                  : "—"}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </>
+        );
+      })()}
 
       {/* Data Quality Warnings */}
       {(missingSettings.length > 0 || invalidOverheads.length > 0 || employeesWithMissingAllocs.length > 0) && (

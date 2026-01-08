@@ -81,27 +81,21 @@ export default async function OverheadsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left Panel: Overhead Types List */}
-        <div>
-          <OverheadTypesList
-            overheadTypes={overheadTypes}
-            totalsByType={totalsByType}
-            missingAllocationsByType={missingAllocationsByType}
-            settings={settings}
-          />
-        </div>
+      {/* Overhead Types List */}
+      <OverheadTypesList
+        overheadTypes={overheadTypes}
+        totalsByType={totalsByType}
+        missingAllocationsByType={missingAllocationsByType}
+        settings={settings}
+      />
 
-        {/* Right Panel: Allocation Grid */}
-        <div>
-          <EnhancedAllocationGrid
-            employees={employees}
-            overheadTypes={overheadTypes}
-            totalsByType={totalsByType}
-            missingAllocationsByType={missingAllocationsByType}
-          />
-        </div>
-      </div>
+      {/* Allocation Grid */}
+      <EnhancedAllocationGrid
+        employees={employees}
+        overheadTypes={overheadTypes}
+        totalsByType={totalsByType}
+        missingAllocationsByType={missingAllocationsByType}
+      />
     </div>
   );
 }

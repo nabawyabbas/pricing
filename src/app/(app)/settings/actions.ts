@@ -159,6 +159,13 @@ export async function resetCoreDefaults() {
       group: "Ratios",
       unit: "ratio",
     },
+    {
+      key: "annual_increase",
+      value: "0.10",
+      valueType: "float" as const,
+      group: "Pricing",
+      unit: "ratio",
+    },
   ];
 
   try {

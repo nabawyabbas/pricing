@@ -90,14 +90,31 @@ function convertToAnnual(amount: number, period: "annual" | "monthly" | "quarter
 }
 
 /**
+ * Get adjusted gross monthly salary after applying annual increase
+ * @param employee - Employee object
+ * @param annualIncrease - Annual increase rate (e.g., 0.10 for 10%)
+ * @returns Adjusted gross monthly salary
+ */
+export function getAdjustedGrossMonthly(
+  employee: Employee,
+  annualIncrease: number = 0
+): number {
+  const increase = Number.isFinite(annualIncrease) ? annualIncrease : 0;
+  return employee.grossMonthly * (1 + increase);
+}
+
+/**
  * Calculate employee annual base cost (in EGP, converted to USD if exchange_ratio provided)
- * annualBase = grossMonthly*12 + grossMonthly*12*oncostRate + annualBenefits + annualBonus
+ * annualBase = adjustedGrossMonthly*12 + adjustedGrossMonthly*12*oncostRate + annualBenefits + annualBonus
+ * where adjustedGrossMonthly = grossMonthly * (1 + annualIncrease)
  */
 export function calculateAnnualBase(
   employee: Employee,
-  exchangeRatio: number | null
+  exchangeRatio: number | null,
+  annualIncrease: number = 0
 ): number {
-  const grossAnnual = employee.grossMonthly * 12;
+  const adjustedGrossMonthly = getAdjustedGrossMonthly(employee, annualIncrease);
+  const grossAnnual = adjustedGrossMonthly * 12;
   const oncostAmount = employee.oncostRate
     ? grossAnnual * employee.oncostRate
     : 0;
@@ -142,9 +159,10 @@ export function calculateAllocatedOverhead(
 export function calculateFullyLoadedAnnual(
   employee: Employee,
   overheadTypes: OverheadType[],
-  exchangeRatio: number | null
+  exchangeRatio: number | null,
+  annualIncrease: number = 0
 ): number {
-  const annualBase = calculateAnnualBase(employee, exchangeRatio);
+  const annualBase = calculateAnnualBase(employee, exchangeRatio, annualIncrease);
   const allocatedOverhead = calculateAllocatedOverhead(employee, overheadTypes, exchangeRatio);
   return annualBase + allocatedOverhead;
 }
@@ -156,9 +174,10 @@ export function calculateFullyLoadedAnnual(
 export function calculateFullyLoadedMonthly(
   employee: Employee,
   overheadTypes: OverheadType[],
-  exchangeRatio: number | null
+  exchangeRatio: number | null,
+  annualIncrease: number = 0
 ): number {
-  const fullyLoadedAnnual = calculateFullyLoadedAnnual(employee, overheadTypes, exchangeRatio);
+  const fullyLoadedAnnual = calculateFullyLoadedAnnual(employee, overheadTypes, exchangeRatio, annualIncrease);
   return fullyLoadedAnnual / 12;
 }
 
@@ -186,8 +205,9 @@ export function calculateCostPerRelHour(
     100
   );
 
+  const annualIncrease = getSetting(settings, "annual_increase", 0);
   const monthlyCost = employees.reduce(
-    (sum, emp) => sum + calculateFullyLoadedMonthly(emp, overheadTypes, exchangeRatio),
+    (sum, emp) => sum + calculateFullyLoadedMonthly(emp, overheadTypes, exchangeRatio, annualIncrease),
     0
   );
 
@@ -265,8 +285,9 @@ export function calculateQaCostPerDevRelHour(
   const standardHoursPerMonth = getSetting(settings, "standard_hours_per_month", 160);
   const qaRatio = getSetting(settings, "qa_ratio", 0.5);
 
+  const annualIncrease = getSetting(settings, "annual_increase", 0);
   const qaMonthlyCost = qaEmployees.reduce(
-    (sum, emp) => sum + calculateFullyLoadedMonthly(emp, overheadTypes, exchangeRatio),
+    (sum, emp) => sum + calculateFullyLoadedMonthly(emp, overheadTypes, exchangeRatio, annualIncrease),
     0
   );
 
@@ -301,8 +322,9 @@ export function calculateBaCostPerDevRelHour(
   const standardHoursPerMonth = getSetting(settings, "standard_hours_per_month", 160);
   const baRatio = getSetting(settings, "ba_ratio", 0.25);
 
+  const annualIncrease = getSetting(settings, "annual_increase", 0);
   const baMonthlyCost = baEmployees.reduce(
-    (sum, emp) => sum + calculateFullyLoadedMonthly(emp, overheadTypes, exchangeRatio),
+    (sum, emp) => sum + calculateFullyLoadedMonthly(emp, overheadTypes, exchangeRatio, annualIncrease),
     0
   );
 

@@ -17,7 +17,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Prisma } from "@prisma/client";
 import {
   updateOverheadAllocation,
   allocateEqually,
@@ -35,7 +34,7 @@ interface EnhancedAllocationGridProps {
     category: string;
     isActive: boolean;
     techStack: { name: string } | null;
-    grossMonthly: Prisma.Decimal;
+    grossMonthly: number;
     overheadAllocs: Array<{
       id: string;
       overheadTypeId: string;

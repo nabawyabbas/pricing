@@ -42,6 +42,21 @@ export interface PricingResult {
   finalPrice: number | null;
 }
 
+export interface BreakdownLine {
+  label: string;
+  value: number | null;
+  formula?: string;
+  inputs?: Record<string, number | string>;
+}
+
+export interface Breakdown {
+  title: string;
+  metricKey: string;
+  result: number | null;
+  currency: "EGP" | "USD";
+  lines: BreakdownLine[];
+}
+
 /**
  * Get setting value by key, with default fallback
  */
@@ -84,6 +99,22 @@ function convertToAnnual(amount: number, period: "annual" | "monthly" | "quarter
       return amount * 12;
     case "quarterly":
       return amount * 4;
+    default:
+      return amount;
+  }
+}
+
+/**
+ * Convert overhead amount to monthly based on period
+ */
+function convertToMonthly(amount: number, period: "annual" | "monthly" | "quarterly"): number {
+  switch (period) {
+    case "annual":
+      return amount / 12;
+    case "monthly":
+      return amount;
+    case "quarterly":
+      return amount / 3;
     default:
       return amount;
   }
@@ -339,6 +370,19 @@ export function calculateBaCostPerDevRelHour(
 }
 
 /**
+ * Calculate raw monthly cost for an employee (salary + oncost + benefits + bonus, NO overhead)
+ * rawMonthly = adjustedGrossMonthly * (1 + oncostRate) + (annualBenefits / 12) + (annualBonus / 12)
+ * where adjustedGrossMonthly = grossMonthly * (1 + annualIncrease)
+ */
+export function calculateRawMonthly(employee: Employee, annualIncrease: number = 0): number {
+  const adjustedGrossMonthly = getAdjustedGrossMonthly(employee, annualIncrease);
+  const oncostRate = employee.oncostRate ?? 0;
+  const annualBenefits = employee.annualBenefits ?? 0;
+  const annualBonus = employee.annualBonus ?? 0;
+  return adjustedGrossMonthly * (1 + oncostRate) + annualBenefits / 12 + annualBonus / 12;
+}
+
+/**
  * Calculate releaseable cost per hour
  * releaseableCost(S) = devCostPerRelHour(S) + qaCostPerDevRelHour + baCostPerDevRelHour
  *
@@ -383,7 +427,7 @@ export function calculateFinalPrice(
  */
 export function calculatePricingForCategory(
   category: "DEV" | "AGENTIC_AI",
-  techStackId: string,
+  techStackId: string | null,
   allEmployees: Employee[],
   overheadTypes: OverheadType[],
   settings: Settings
@@ -447,4 +491,601 @@ export function calculatePricing(
     overheadTypes,
     settings
   );
+}
+
+/**
+ * Calculate pricing with detailed breakdowns for each metric
+ * Returns pricing result and a map of breakdowns keyed by metricKey
+ */
+export function calculatePricingWithBreakdowns(
+  category: "DEV" | "AGENTIC_AI",
+  techStackId: string | null,
+  allEmployees: Employee[],
+  overheadTypes: OverheadType[],
+  settings: Settings
+): {
+  pricing: PricingResult;
+  breakdowns: Map<string, Breakdown>;
+} {
+  const breakdowns = new Map<string, Breakdown>();
+  const exchangeRatio = getExchangeRatio(settings);
+  const currency: "EGP" | "USD" = exchangeRatio && exchangeRatio > 0 ? "USD" : "EGP";
+  const devReleasableHoursPerMonth = getSetting(settings, "dev_releasable_hours_per_month", 100);
+  const standardHoursPerMonth = getSetting(settings, "standard_hours_per_month", 160);
+  const qaRatio = getSetting(settings, "qa_ratio", 0.5);
+  const baRatio = getSetting(settings, "ba_ratio", 0.25);
+  const annualIncrease = getSetting(settings, "annual_increase", 0);
+  const margin = getSetting(settings, "margin", 0.2);
+  const risk = getSetting(settings, "risk", 0.1);
+
+  // Filter employees
+  const categoryEmployees = allEmployees.filter(
+    (emp) => emp.category === category && emp.techStackId === techStackId
+  );
+  const qaEmployees = allEmployees.filter((emp) => emp.category === "QA");
+  const baEmployees = allEmployees.filter((emp) => emp.category === "BA");
+
+  // Calculate raw cost per releaseable hour
+  const totalFte = categoryEmployees.reduce((sum, emp) => sum + emp.fte, 0);
+  const capacityHours = devReleasableHoursPerMonth * totalFte;
+  let rawCostPerRelHour: number | null = null;
+
+  if (capacityHours > 0) {
+    const rawMonthlyTotal = categoryEmployees.reduce(
+      (sum, emp) => sum + calculateRawMonthly(emp, annualIncrease),
+      0
+    );
+    const rawCostPerHourEGP = rawMonthlyTotal / capacityHours;
+    rawCostPerRelHour = exchangeRatio && exchangeRatio > 0 ? rawCostPerHourEGP / exchangeRatio : rawCostPerHourEGP;
+
+    // Breakdown for raw cost
+    const rawBreakdown: Breakdown = {
+      title: "Dev Cost (Raw Cost/hr)",
+      metricKey: "dev_raw_hr",
+      result: rawCostPerRelHour,
+      currency,
+      lines: [
+        {
+          label: "Employees",
+          value: categoryEmployees.length,
+          inputs: { count: categoryEmployees.length },
+        },
+        {
+          label: "Total FTE",
+          value: totalFte,
+          formula: "sum(fte)",
+        },
+        {
+          label: "Dev Releasable Hours/Month",
+          value: devReleasableHoursPerMonth,
+          inputs: { setting: "dev_releasable_hours_per_month" },
+        },
+        {
+          label: "Capacity Hours/Month",
+          value: capacityHours,
+          formula: "dev_releasable_hours_per_month * total_fte",
+        },
+        {
+          label: "Raw Monthly Total (EGP)",
+          value: rawMonthlyTotal,
+          formula: "sum(rawMonthly per employee)",
+        },
+        {
+          label: "Raw Cost/Hour (EGP)",
+          value: rawCostPerHourEGP,
+          formula: "raw_monthly_total / capacity_hours",
+        },
+        ...(exchangeRatio && exchangeRatio > 0
+          ? [
+              {
+                label: "Exchange Ratio",
+                value: exchangeRatio,
+                inputs: { setting: "exchange_ratio" },
+              },
+              {
+                label: "Raw Cost/Hour (USD)",
+                value: rawCostPerRelHour,
+                formula: "raw_cost_per_hour_egp / exchange_ratio",
+              },
+            ]
+          : []),
+      ],
+    };
+    breakdowns.set("dev_raw_hr", rawBreakdown);
+  }
+
+  // Calculate overheads per type
+  const overheadsPerType: (number | null)[] = [];
+  overheadTypes.forEach((type, idx) => {
+    let overheadPerRelHour: number | null = null;
+    if (capacityHours > 0) {
+      const overheadMonthly = convertToMonthly(type.amount, type.period);
+      const shareSum = categoryEmployees.reduce((sum, emp) => {
+        const alloc = emp.overheadAllocs?.find((a) => a.overheadTypeId === type.id);
+        return sum + (alloc?.share ?? 0);
+      }, 0);
+      const devOverheadMonthly = overheadMonthly * shareSum;
+      const overheadPerHourEGP = devOverheadMonthly / capacityHours;
+      overheadPerRelHour = exchangeRatio && exchangeRatio > 0 ? overheadPerHourEGP / exchangeRatio : overheadPerHourEGP;
+
+      // Breakdown for this overhead type
+      const overheadBreakdown: Breakdown = {
+        title: `${type.name} Overhead/hr`,
+        metricKey: `dev_overhead_hr:${type.id}`,
+        result: overheadPerRelHour,
+        currency,
+        lines: [
+          {
+            label: "Overhead Amount",
+            value: type.amount,
+            inputs: { period: type.period },
+          },
+          {
+            label: "Overhead Monthly (EGP)",
+            value: overheadMonthly,
+            formula: type.period === "annual" ? "amount / 12" : type.period === "quarterly" ? "amount / 3" : "amount",
+          },
+          {
+            label: "Allocation Share Sum",
+            value: shareSum,
+            formula: "sum(share for category employees)",
+          },
+          {
+            label: "Dev Overhead Monthly (EGP)",
+            value: devOverheadMonthly,
+            formula: "overhead_monthly * share_sum",
+          },
+          {
+            label: "Capacity Hours/Month",
+            value: capacityHours,
+            formula: "dev_releasable_hours_per_month * total_fte",
+          },
+          {
+            label: "Overhead/Hour (EGP)",
+            value: overheadPerHourEGP,
+            formula: "dev_overhead_monthly / capacity_hours",
+          },
+          ...(exchangeRatio && exchangeRatio > 0
+            ? [
+                {
+                  label: "Exchange Ratio",
+                  value: exchangeRatio,
+                  inputs: { setting: "exchange_ratio" },
+                },
+                {
+                  label: "Overhead/Hour (USD)",
+                  value: overheadPerRelHour,
+                  formula: "overhead_per_hour_egp / exchange_ratio",
+                },
+              ]
+            : []),
+        ],
+      };
+      breakdowns.set(`dev_overhead_hr:${type.id}`, overheadBreakdown);
+    }
+    overheadsPerType.push(overheadPerRelHour);
+  });
+
+  // Calculate total overheads
+  const totalOverheads = overheadsPerType.reduce((sum: number, val) => sum + (val ?? 0), 0);
+  if (capacityHours > 0) {
+    const totalOverheadsBreakdown: Breakdown = {
+      title: "Total Overheads/hr",
+      metricKey: "total_overheads_hr",
+      result: totalOverheads,
+      currency,
+      lines: [
+        {
+          label: "Overhead Types Count",
+          value: overheadTypes.length,
+        },
+        {
+          label: "Sum of All Overheads",
+          value: totalOverheads,
+          formula: "sum(overhead_per_type)",
+        },
+      ],
+    };
+    breakdowns.set("total_overheads_hr", totalOverheadsBreakdown);
+  }
+
+  // Calculate QA add-on (only for DEV)
+  let qaAddOnPerRelHour = 0;
+  if (category === "DEV" && qaEmployees.length > 0 && standardHoursPerMonth > 0) {
+    const qaRawMonthly = qaEmployees.reduce(
+      (sum, emp) => sum + calculateRawMonthly(emp, annualIncrease),
+      0
+    );
+    const qaRawPerQaHour = qaRawMonthly / standardHoursPerMonth;
+    const qaAddOnEGP = qaRatio * qaRawPerQaHour;
+    qaAddOnPerRelHour = exchangeRatio && exchangeRatio > 0 ? qaAddOnEGP / exchangeRatio : qaAddOnEGP;
+
+    // Add overhead contributions to QA add-on
+    const qaOverheadDetails = overheadTypes.map((type) => {
+      const overheadMonthly = convertToMonthly(type.amount, type.period);
+      const shareSum = qaEmployees.reduce((sum, emp) => {
+        const alloc = emp.overheadAllocs?.find((a) => a.overheadTypeId === type.id);
+        return sum + (alloc?.share ?? 0);
+      }, 0);
+      const qaOverheadMonthly = overheadMonthly * shareSum;
+      const qaPerQaHour = qaOverheadMonthly / standardHoursPerMonth;
+      const qaAddOnForTypeEGP = qaRatio * qaPerQaHour;
+      const qaAddOnForType = exchangeRatio && exchangeRatio > 0 ? qaAddOnForTypeEGP / exchangeRatio : qaAddOnForTypeEGP;
+      return {
+        type,
+        overheadMonthly,
+        shareSum,
+        qaOverheadMonthly,
+        qaPerQaHour,
+        qaAddOnForTypeEGP,
+        qaAddOnForType,
+      };
+    });
+    const qaOverheadsTotal = qaOverheadDetails.reduce((sum, detail) => sum + detail.qaAddOnForType, 0);
+    const qaAddOnTotal = qaAddOnPerRelHour + qaOverheadsTotal;
+
+    // Breakdown for QA add-on
+    const qaBreakdown: Breakdown = {
+      title: "QA Add-on/hr",
+      metricKey: "qa_addon_hr",
+      result: qaAddOnTotal,
+      currency,
+      lines: [
+        {
+          label: "QA Employees",
+          value: qaEmployees.length,
+        },
+        {
+          label: "QA Raw Monthly (EGP)",
+          value: qaRawMonthly,
+          formula: "sum(rawMonthly for QA employees)",
+        },
+        {
+          label: "Standard Hours/Month",
+          value: standardHoursPerMonth,
+          inputs: { setting: "standard_hours_per_month" },
+        },
+        {
+          label: "QA Raw/Hour (EGP)",
+          value: qaRawPerQaHour,
+          formula: "qa_raw_monthly / standard_hours_per_month",
+        },
+        {
+          label: "QA Ratio",
+          value: qaRatio,
+          inputs: { setting: "qa_ratio" },
+        },
+        {
+          label: "QA Add-on Raw (EGP)",
+          value: qaAddOnEGP,
+          formula: "qa_ratio * qa_raw_per_hour",
+        },
+        ...(exchangeRatio && exchangeRatio > 0
+          ? [
+              {
+                label: "QA Add-on Raw (USD)",
+                value: qaAddOnPerRelHour,
+                formula: "qa_addon_raw_egp / exchange_ratio",
+              },
+            ]
+          : []),
+        // Individual overhead type contributions
+        ...qaOverheadDetails.flatMap((detail) => [
+          {
+            label: `${detail.type.name} - Overhead Monthly (EGP)`,
+            value: detail.overheadMonthly,
+            formula: detail.type.period === "annual" ? "amount / 12" : detail.type.period === "quarterly" ? "amount / 3" : "amount",
+            inputs: { overheadType: detail.type.name, period: detail.type.period },
+          },
+          {
+            label: `${detail.type.name} - Allocation Share Sum`,
+            value: detail.shareSum,
+            formula: "sum(share for QA employees)",
+          },
+          {
+            label: `${detail.type.name} - QA Overhead Monthly (EGP)`,
+            value: detail.qaOverheadMonthly,
+            formula: "overhead_monthly * share_sum",
+          },
+          {
+            label: `${detail.type.name} - QA/Hour (EGP)`,
+            value: detail.qaPerQaHour,
+            formula: "qa_overhead_monthly / standard_hours_per_month",
+          },
+          {
+            label: `${detail.type.name} - QA Add-on (EGP)`,
+            value: detail.qaAddOnForTypeEGP,
+            formula: "qa_ratio * qa_per_hour",
+          },
+          ...(exchangeRatio && exchangeRatio > 0
+            ? [
+                {
+                  label: `${detail.type.name} - QA Add-on (USD)`,
+                  value: detail.qaAddOnForType,
+                  formula: "qa_addon_egp / exchange_ratio",
+                },
+              ]
+            : []),
+        ]),
+        {
+          label: "QA Overheads Total",
+          value: qaOverheadsTotal,
+          formula: `sum(${qaOverheadDetails.map((d) => d.type.name).join(", ")})`,
+        },
+        {
+          label: "QA Add-on Total",
+          value: qaAddOnTotal,
+          formula: "qa_addon_raw + qa_overheads_total",
+        },
+      ],
+    };
+    breakdowns.set("qa_addon_hr", qaBreakdown);
+  }
+
+  // Calculate BA add-on (only for DEV)
+  let baAddOnPerRelHour = 0;
+  if (category === "DEV" && baEmployees.length > 0 && standardHoursPerMonth > 0) {
+    const baRawMonthly = baEmployees.reduce(
+      (sum, emp) => sum + calculateRawMonthly(emp, annualIncrease),
+      0
+    );
+    const baRawPerBaHour = baRawMonthly / standardHoursPerMonth;
+    const baAddOnEGP = baRatio * baRawPerBaHour;
+    baAddOnPerRelHour = exchangeRatio && exchangeRatio > 0 ? baAddOnEGP / exchangeRatio : baAddOnEGP;
+
+    // Add overhead contributions to BA add-on
+    const baOverheadDetails = overheadTypes.map((type) => {
+      const overheadMonthly = convertToMonthly(type.amount, type.period);
+      const shareSum = baEmployees.reduce((sum, emp) => {
+        const alloc = emp.overheadAllocs?.find((a) => a.overheadTypeId === type.id);
+        return sum + (alloc?.share ?? 0);
+      }, 0);
+      const baOverheadMonthly = overheadMonthly * shareSum;
+      const baPerBaHour = baOverheadMonthly / standardHoursPerMonth;
+      const baAddOnForTypeEGP = baRatio * baPerBaHour;
+      const baAddOnForType = exchangeRatio && exchangeRatio > 0 ? baAddOnForTypeEGP / exchangeRatio : baAddOnForTypeEGP;
+      return {
+        type,
+        overheadMonthly,
+        shareSum,
+        baOverheadMonthly,
+        baPerBaHour,
+        baAddOnForTypeEGP,
+        baAddOnForType,
+      };
+    });
+    const baOverheadsTotal = baOverheadDetails.reduce((sum, detail) => sum + detail.baAddOnForType, 0);
+    const baAddOnTotal = baAddOnPerRelHour + baOverheadsTotal;
+
+    // Breakdown for BA add-on
+    const baBreakdown: Breakdown = {
+      title: "BA Add-on/hr",
+      metricKey: "ba_addon_hr",
+      result: baAddOnTotal,
+      currency,
+      lines: [
+        {
+          label: "BA Employees",
+          value: baEmployees.length,
+        },
+        {
+          label: "BA Raw Monthly (EGP)",
+          value: baRawMonthly,
+          formula: "sum(rawMonthly for BA employees)",
+        },
+        {
+          label: "Standard Hours/Month",
+          value: standardHoursPerMonth,
+          inputs: { setting: "standard_hours_per_month" },
+        },
+        {
+          label: "BA Raw/Hour (EGP)",
+          value: baRawPerBaHour,
+          formula: "ba_raw_monthly / standard_hours_per_month",
+        },
+        {
+          label: "BA Ratio",
+          value: baRatio,
+          inputs: { setting: "ba_ratio" },
+        },
+        {
+          label: "BA Add-on Raw (EGP)",
+          value: baAddOnEGP,
+          formula: "ba_ratio * ba_raw_per_hour",
+        },
+        ...(exchangeRatio && exchangeRatio > 0
+          ? [
+              {
+                label: "BA Add-on Raw (USD)",
+                value: baAddOnPerRelHour,
+                formula: "ba_addon_raw_egp / exchange_ratio",
+              },
+            ]
+          : []),
+        // Individual overhead type contributions
+        ...baOverheadDetails.flatMap((detail) => [
+          {
+            label: `${detail.type.name} - Overhead Monthly (EGP)`,
+            value: detail.overheadMonthly,
+            formula: detail.type.period === "annual" ? "amount / 12" : detail.type.period === "quarterly" ? "amount / 3" : "amount",
+            inputs: { overheadType: detail.type.name, period: detail.type.period },
+          },
+          {
+            label: `${detail.type.name} - Allocation Share Sum`,
+            value: detail.shareSum,
+            formula: "sum(share for BA employees)",
+          },
+          {
+            label: `${detail.type.name} - BA Overhead Monthly (EGP)`,
+            value: detail.baOverheadMonthly,
+            formula: "overhead_monthly * share_sum",
+          },
+          {
+            label: `${detail.type.name} - BA/Hour (EGP)`,
+            value: detail.baPerBaHour,
+            formula: "ba_overhead_monthly / standard_hours_per_month",
+          },
+          {
+            label: `${detail.type.name} - BA Add-on (EGP)`,
+            value: detail.baAddOnForTypeEGP,
+            formula: "ba_ratio * ba_per_hour",
+          },
+          ...(exchangeRatio && exchangeRatio > 0
+            ? [
+                {
+                  label: `${detail.type.name} - BA Add-on (USD)`,
+                  value: detail.baAddOnForType,
+                  formula: "ba_addon_egp / exchange_ratio",
+                },
+              ]
+            : []),
+        ]),
+        {
+          label: "BA Overheads Total",
+          value: baOverheadsTotal,
+          formula: `sum(${baOverheadDetails.map((d) => d.type.name).join(", ")})`,
+        },
+        {
+          label: "BA Add-on Total",
+          value: baAddOnTotal,
+          formula: "ba_addon_raw + ba_overheads_total",
+        },
+      ],
+    };
+    breakdowns.set("ba_addon_hr", baBreakdown);
+  }
+
+  // Calculate COGS (only for DEV)
+  let cogsPerRelHour: number | null = null;
+  if (category === "DEV" && rawCostPerRelHour !== null) {
+    const qaAddOnTotal = breakdowns.get("qa_addon_hr")?.result ?? 0;
+    const baAddOnTotal = breakdowns.get("ba_addon_hr")?.result ?? 0;
+    cogsPerRelHour = rawCostPerRelHour + qaAddOnTotal + baAddOnTotal;
+
+    const cogsBreakdown: Breakdown = {
+      title: "COGS/hr",
+      metricKey: "cogs_hr",
+      result: cogsPerRelHour,
+      currency,
+      lines: [
+        {
+          label: "Dev Cost (Raw)",
+          value: rawCostPerRelHour,
+          formula: "See 'dev_raw_hr' breakdown",
+        },
+        {
+          label: "QA Add-on Total",
+          value: qaAddOnTotal,
+          formula: "See 'qa_addon_hr' breakdown",
+        },
+        {
+          label: "BA Add-on Total",
+          value: baAddOnTotal,
+          formula: "See 'ba_addon_hr' breakdown",
+        },
+        {
+          label: "COGS",
+          value: cogsPerRelHour,
+          formula: "dev_cost + qa_addon_total + ba_addon_total",
+        },
+      ],
+    };
+    breakdowns.set("cogs_hr", cogsBreakdown);
+  }
+
+  // Calculate total releaseable cost
+  const totalReleaseableCost =
+    rawCostPerRelHour !== null && totalOverheads !== null
+      ? rawCostPerRelHour + totalOverheads + (category === "DEV" ? (breakdowns.get("qa_addon_hr")?.result ?? 0) + (breakdowns.get("ba_addon_hr")?.result ?? 0) : 0)
+      : null;
+
+  if (totalReleaseableCost !== null) {
+    const totalBreakdown: Breakdown = {
+      title: "Total Releaseable Cost/hr",
+      metricKey: "total_releaseable_cost_hr",
+      result: totalReleaseableCost,
+      currency,
+      lines: [
+        {
+          label: "Dev Cost (Raw)",
+          value: rawCostPerRelHour,
+          formula: "See 'dev_raw_hr' breakdown",
+        },
+        {
+          label: "Total Overheads",
+          value: totalOverheads,
+          formula: "See 'total_overheads_hr' breakdown",
+        },
+        ...(category === "DEV"
+          ? [
+              {
+                label: "QA Add-on Total",
+                value: breakdowns.get("qa_addon_hr")?.result ?? 0,
+                formula: "See 'qa_addon_hr' breakdown",
+              },
+              {
+                label: "BA Add-on Total",
+                value: breakdowns.get("ba_addon_hr")?.result ?? 0,
+                formula: "See 'ba_addon_hr' breakdown",
+              },
+            ]
+          : []),
+        {
+          label: "Total Releaseable Cost",
+          value: totalReleaseableCost,
+          formula:
+            category === "DEV"
+              ? "dev_cost + total_overheads + qa_addon + ba_addon"
+              : "dev_cost + total_overheads",
+        },
+      ],
+    };
+    breakdowns.set("total_releaseable_cost_hr", totalBreakdown);
+  }
+
+  // Calculate final price
+  const finalPrice = totalReleaseableCost !== null ? totalReleaseableCost * (1 + margin) * (1 + risk) : null;
+
+  if (finalPrice !== null) {
+    const finalPriceBreakdown: Breakdown = {
+      title: "Final Price/hr",
+      metricKey: "final_price_hr",
+      result: finalPrice,
+      currency,
+      lines: [
+        {
+          label: "Total Releaseable Cost",
+          value: totalReleaseableCost,
+          formula: "See 'total_releaseable_cost_hr' breakdown",
+        },
+        {
+          label: "Margin",
+          value: margin,
+          inputs: { setting: "margin" },
+        },
+        {
+          label: "Risk",
+          value: risk,
+          inputs: { setting: "risk" },
+        },
+        {
+          label: "Final Price",
+          value: finalPrice,
+          formula: "total_releaseable_cost * (1 + margin) * (1 + risk)",
+        },
+      ],
+    };
+    breakdowns.set("final_price_hr", finalPriceBreakdown);
+  }
+
+  // Calculate pricing result
+  const pricing: PricingResult = {
+    devCostPerRelHour: rawCostPerRelHour,
+    qaCostPerDevRelHour: category === "DEV" ? breakdowns.get("qa_addon_hr")?.result ?? 0 : 0,
+    baCostPerDevRelHour: category === "DEV" ? breakdowns.get("ba_addon_hr")?.result ?? 0 : 0,
+    releaseableCost: totalReleaseableCost,
+    finalPrice,
+  };
+
+  return { pricing, breakdowns };
 }

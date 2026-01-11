@@ -7,6 +7,7 @@ import {
   calculateBaCostPerDevRelHour,
   calculateReleaseableCost,
   calculateAnnualBase,
+  calculatePricingWithBreakdowns,
   type Employee,
   type OverheadType,
   type Settings,
@@ -742,6 +743,279 @@ describe("pricing calculations", () => {
       expect(resultWithIncrease.devCostPerRelHour!).toBeGreaterThan(
         resultWithoutIncrease.devCostPerRelHour!
       );
+    });
+  });
+
+  describe("settings overrides affect pricing", () => {
+    it("should change price when margin override is applied", () => {
+      const baseSettings: Settings = {
+        dev_releasable_hours_per_month: 100,
+        standard_hours_per_month: 160,
+        qa_ratio: 0.5,
+        ba_ratio: 0.25,
+        margin: 0.2,
+        risk: 0.1,
+      };
+
+      const overrideSettings: Settings = {
+        ...baseSettings,
+        margin: 0.3, // 30% instead of 20%
+      };
+
+      const employee = createDevEmployee("stack1", 10000, 1.0);
+      const overheadTypes: OverheadType[] = [];
+      const employees = [employee];
+
+      const baseResult = calculatePricing("stack1", employees, overheadTypes, baseSettings);
+      const overrideResult = calculatePricing("stack1", employees, overheadTypes, overrideSettings);
+
+      expect(overrideResult.finalPrice).toBeGreaterThan(baseResult.finalPrice);
+      // Final price should be higher due to increased margin
+    });
+
+    it("should change price when risk override is applied", () => {
+      const baseSettings: Settings = {
+        dev_releasable_hours_per_month: 100,
+        standard_hours_per_month: 160,
+        qa_ratio: 0.5,
+        ba_ratio: 0.25,
+        margin: 0.2,
+        risk: 0.1,
+      };
+
+      const overrideSettings: Settings = {
+        ...baseSettings,
+        risk: 0.2, // 20% instead of 10%
+      };
+
+      const employee = createDevEmployee("stack1", 10000, 1.0);
+      const overheadTypes: OverheadType[] = [];
+      const employees = [employee];
+
+      const baseResult = calculatePricing("stack1", employees, overheadTypes, baseSettings);
+      const overrideResult = calculatePricing("stack1", employees, overheadTypes, overrideSettings);
+
+      expect(overrideResult.finalPrice).toBeGreaterThan(baseResult.finalPrice);
+    });
+
+    it("should change price when annual_increase override is applied", () => {
+      const baseSettings: Settings = {
+        dev_releasable_hours_per_month: 100,
+        standard_hours_per_month: 160,
+        qa_ratio: 0.5,
+        ba_ratio: 0.25,
+        margin: 0.2,
+        risk: 0.1,
+        annual_increase: 0,
+      };
+
+      const overrideSettings: Settings = {
+        ...baseSettings,
+        annual_increase: 0.1, // 10% increase
+      };
+
+      const employee = createDevEmployee("stack1", 10000, 1.0);
+      const overheadTypes: OverheadType[] = [];
+      const employees = [employee];
+
+      const baseResult = calculatePricing("stack1", employees, overheadTypes, baseSettings);
+      const overrideResult = calculatePricing("stack1", employees, overheadTypes, overrideSettings);
+
+      // With annual increase, costs should be higher, so final price should be higher
+      expect(overrideResult.finalPrice).toBeGreaterThan(baseResult.finalPrice);
+    });
+  });
+
+  describe("calculatePricingWithBreakdowns", () => {
+    it("should return pricing result and breakdowns map", () => {
+      const techStackId = "stack-1";
+      const devEmployee = createDevEmployee(techStackId, 10000, 1.0);
+      const employees = [devEmployee];
+
+      const { pricing, breakdowns } = calculatePricingWithBreakdowns(
+        "DEV",
+        techStackId,
+        employees,
+        baseOverheadTypes,
+        baseSettings
+      );
+
+      expect(pricing).toBeDefined();
+      expect(breakdowns).toBeInstanceOf(Map);
+      expect(breakdowns.size).toBeGreaterThan(0);
+    });
+
+    it("should have breakdown result equal to displayed value for dev_raw_hr", () => {
+      const techStackId = "stack-1";
+      const devEmployee = createDevEmployee(techStackId, 10000, 1.0);
+      const employees = [devEmployee];
+
+      const { pricing, breakdowns } = calculatePricingWithBreakdowns(
+        "DEV",
+        techStackId,
+        employees,
+        baseOverheadTypes,
+        baseSettings
+      );
+
+      const rawBreakdown = breakdowns.get("dev_raw_hr");
+      expect(rawBreakdown).toBeDefined();
+      if (rawBreakdown && pricing.devCostPerRelHour !== null) {
+        expect(rawBreakdown.result).toBeCloseTo(pricing.devCostPerRelHour, 2);
+      }
+    });
+
+    it("should have breakdown result equal to displayed value for total_releaseable_cost_hr", () => {
+      const techStackId = "stack-1";
+      const devEmployee = createDevEmployee(techStackId, 10000, 1.0);
+      const employees = [devEmployee];
+
+      const { pricing, breakdowns } = calculatePricingWithBreakdowns(
+        "DEV",
+        techStackId,
+        employees,
+        baseOverheadTypes,
+        baseSettings
+      );
+
+      const totalBreakdown = breakdowns.get("total_releaseable_cost_hr");
+      expect(totalBreakdown).toBeDefined();
+      if (totalBreakdown && pricing.releaseableCost !== null) {
+        expect(totalBreakdown.result).toBeCloseTo(pricing.releaseableCost, 2);
+      }
+    });
+
+    it("should have breakdown result equal to displayed value for final_price_hr", () => {
+      const techStackId = "stack-1";
+      const devEmployee = createDevEmployee(techStackId, 10000, 1.0);
+      const employees = [devEmployee];
+
+      const { pricing, breakdowns } = calculatePricingWithBreakdowns(
+        "DEV",
+        techStackId,
+        employees,
+        baseOverheadTypes,
+        baseSettings
+      );
+
+      const finalPriceBreakdown = breakdowns.get("final_price_hr");
+      expect(finalPriceBreakdown).toBeDefined();
+      if (finalPriceBreakdown && pricing.finalPrice !== null) {
+        expect(finalPriceBreakdown.result).toBeCloseTo(pricing.finalPrice, 2);
+      }
+    });
+
+    it("should include breakdown for each overhead type", () => {
+      const techStackId = "stack-1";
+      const devEmployee = createDevEmployee(techStackId, 10000, 1.0);
+      const employees = [devEmployee];
+
+      const { breakdowns } = calculatePricingWithBreakdowns(
+        "DEV",
+        techStackId,
+        employees,
+        baseOverheadTypes,
+        baseSettings
+      );
+
+      baseOverheadTypes.forEach((type) => {
+        const overheadBreakdown = breakdowns.get(`dev_overhead_hr:${type.id}`);
+        expect(overheadBreakdown).toBeDefined();
+        if (overheadBreakdown) {
+          expect(overheadBreakdown.title).toContain(type.name);
+          expect(overheadBreakdown.lines.length).toBeGreaterThan(0);
+        }
+      });
+    });
+
+    it("should include QA add-on breakdown for DEV category", () => {
+      const techStackId = "stack-1";
+      const devEmployee = createDevEmployee(techStackId, 10000, 1.0);
+      const qaEmployee = createQaEmployee(5000);
+      const employees = [devEmployee, qaEmployee];
+
+      const { breakdowns } = calculatePricingWithBreakdowns(
+        "DEV",
+        techStackId,
+        employees,
+        baseOverheadTypes,
+        baseSettings
+      );
+
+      const qaBreakdown = breakdowns.get("qa_addon_hr");
+      expect(qaBreakdown).toBeDefined();
+      if (qaBreakdown) {
+        expect(qaBreakdown.title).toBe("QA Add-on/hr");
+        expect(qaBreakdown.lines.length).toBeGreaterThan(0);
+      }
+    });
+
+    it("should not include QA/BA breakdowns for AGENTIC_AI category", () => {
+      const techStackId = "stack-1";
+      const agenticEmployee: Employee = {
+        ...createDevEmployee(techStackId, 10000, 1.0),
+        category: "AGENTIC_AI",
+      };
+      const qaEmployee = createQaEmployee(5000);
+      const employees = [agenticEmployee, qaEmployee];
+
+      const { breakdowns } = calculatePricingWithBreakdowns(
+        "AGENTIC_AI",
+        techStackId,
+        employees,
+        baseOverheadTypes,
+        baseSettings
+      );
+
+      expect(breakdowns.has("qa_addon_hr")).toBe(false);
+      expect(breakdowns.has("ba_addon_hr")).toBe(false);
+    });
+
+    it("should include COGS breakdown for DEV category", () => {
+      const techStackId = "stack-1";
+      const devEmployee = createDevEmployee(techStackId, 10000, 1.0);
+      const qaEmployee = createQaEmployee(5000);
+      const employees = [devEmployee, qaEmployee];
+
+      const { breakdowns } = calculatePricingWithBreakdowns(
+        "DEV",
+        techStackId,
+        employees,
+        baseOverheadTypes,
+        baseSettings
+      );
+
+      const cogsBreakdown = breakdowns.get("cogs_hr");
+      expect(cogsBreakdown).toBeDefined();
+      if (cogsBreakdown) {
+        expect(cogsBreakdown.title).toBe("COGS/hr");
+        expect(cogsBreakdown.lines.length).toBeGreaterThan(0);
+      }
+    });
+
+    it("should have breakdown lines with label, value, and optional formula/inputs", () => {
+      const techStackId = "stack-1";
+      const devEmployee = createDevEmployee(techStackId, 10000, 1.0);
+      const employees = [devEmployee];
+
+      const { breakdowns } = calculatePricingWithBreakdowns(
+        "DEV",
+        techStackId,
+        employees,
+        baseOverheadTypes,
+        baseSettings
+      );
+
+      const rawBreakdown = breakdowns.get("dev_raw_hr");
+      expect(rawBreakdown).toBeDefined();
+      if (rawBreakdown) {
+        rawBreakdown.lines.forEach((line) => {
+          expect(line.label).toBeDefined();
+          expect(line.value !== undefined).toBe(true);
+          // Formula or inputs should be present for most lines
+          expect(line.formula !== undefined || line.inputs !== undefined).toBe(true);
+        });
+      }
     });
   });
 });

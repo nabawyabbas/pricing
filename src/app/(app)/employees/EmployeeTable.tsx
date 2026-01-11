@@ -271,7 +271,12 @@ export function EmployeeTable({
     <>
       <Card>
         <CardHeader>
-          <CardTitle>Employees</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle>Employees</CardTitle>
+            <div className="text-sm text-muted-foreground">
+              {filteredEmployees.length} of {employees.length} employee{employees.length !== 1 ? 's' : ''}
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           {/* Filters */}

@@ -43,21 +43,23 @@ model TechStack {
 }
 
 model Employee {
-  id             String               @id @default(cuid())
+  id             String                    @id @default(cuid())
   name           String
   category       EmployeeCategory
   techStackId    String?
-  techStack      TechStack?           @relation(fields: [techStackId], references: [id])
-  grossMonthly   Decimal              @db.Decimal(10, 2)
-  netMonthly     Decimal              @db.Decimal(10, 2)
+  techStack      TechStack?                @relation(fields: [techStackId], references: [id])
+  grossMonthly   Decimal                   @db.Decimal(10, 2)
+  netMonthly     Decimal                   @db.Decimal(10, 2)
   oncostRate     Float?
-  annualBenefits Decimal?             @db.Decimal(10, 2)
-  annualBonus    Decimal?             @db.Decimal(10, 2)
-  fte            Float                @default(1.0)
-  isActive       Boolean              @default(true)
+  annualBenefits Decimal?                  @db.Decimal(10, 2)
+  annualBonus    Decimal?                  @db.Decimal(10, 2)
+  fte            Float                     @default(1.0)
+  isActive       Boolean                   @default(true)
   overheadAllocs OverheadAllocation[]
-  createdAt      DateTime             @default(now())
-  updatedAt      DateTime             @updatedAt
+  activeOverrides EmployeeActiveOverride[]
+  allocationOverrides OverheadAllocationOverride[]
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
 }
 
 model Setting {
@@ -72,14 +74,16 @@ model Setting {
 }
 
 model OverheadType {
-  id          String               @id @default(cuid())
+  id          String                      @id @default(cuid())
   name        String
-  amount      Decimal              @db.Decimal(10, 2)
+  amount      Decimal                     @db.Decimal(10, 2)
   period      OverheadPeriod
-  isActive    Boolean              @default(true)
+  isActive    Boolean                     @default(true)
   allocations OverheadAllocation[]
-  createdAt   DateTime             @default(now())
-  updatedAt   DateTime             @updatedAt
+  activeOverrides OverheadTypeActiveOverride[]
+  allocationOverrides OverheadAllocationOverride[]
+  createdAt   DateTime                    @default(now())
+  updatedAt   DateTime                    @updatedAt
 }
 
 model OverheadAllocation {
@@ -93,4 +97,71 @@ model OverheadAllocation {
   updatedAt      DateTime     @updatedAt
 
   @@unique([employeeId, overheadTypeId])
+}
+
+model PricingView {
+  id                      String                    @id @default(cuid())
+  name                    String
+  employeeOverrides       EmployeeActiveOverride[]
+  overheadTypeOverrides   OverheadTypeActiveOverride[]
+  settingOverrides        SettingOverride[]
+  allocationOverrides     OverheadAllocationOverride[]
+  createdAt               DateTime                  @default(now())
+  updatedAt               DateTime                  @updatedAt
+}
+
+model EmployeeActiveOverride {
+  id         String       @id @default(cuid())
+  viewId     String
+  view       PricingView  @relation(fields: [viewId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  isActive   Boolean
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  @@unique([viewId, employeeId])
+}
+
+model OverheadTypeActiveOverride {
+  id             String       @id @default(cuid())
+  viewId         String
+  view           PricingView  @relation(fields: [viewId], references: [id], onDelete: Cascade)
+  overheadTypeId String
+  overheadType   OverheadType @relation(fields: [overheadTypeId], references: [id], onDelete: Cascade)
+  isActive       Boolean
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([viewId, overheadTypeId])
+}
+
+model SettingOverride {
+  id        String       @id @default(cuid())
+  viewId    String
+  view      PricingView  @relation(fields: [viewId], references: [id], onDelete: Cascade)
+  key       String
+  value     String
+  valueType SettingValueType
+  group     String?
+  unit      String?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@unique([viewId, key])
+}
+
+model OverheadAllocationOverride {
+  id             String       @id @default(cuid())
+  viewId         String
+  view           PricingView  @relation(fields: [viewId], references: [id], onDelete: Cascade)
+  employeeId     String
+  employee       Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  overheadTypeId String
+  overheadType   OverheadType @relation(fields: [overheadTypeId], references: [id], onDelete: Cascade)
+  share          Float
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([viewId, employeeId, overheadTypeId])
 }

@@ -55,10 +55,33 @@ async function getSettings(): Promise<Settings> {
 }
 
 export default async function EmployeesPage() {
-  const employees = await getEmployees();
+  const employeesRaw = await getEmployees();
   const techStacks = await getTechStacks();
   const overheadTypes = await getOverheadTypes();
   const settings = await getSettings();
+
+  // Convert Prisma Decimal objects to numbers for Client Component
+  const employees = employeesRaw.map((emp) => ({
+    id: emp.id,
+    name: emp.name,
+    category: emp.category,
+    techStackId: emp.techStackId,
+    techStack: emp.techStack,
+    grossMonthly: Number(emp.grossMonthly),
+    netMonthly: Number(emp.netMonthly),
+    oncostRate: emp.oncostRate,
+    annualBenefits: emp.annualBenefits ? Number(emp.annualBenefits) : null,
+    annualBonus: emp.annualBonus ? Number(emp.annualBonus) : null,
+    fte: emp.fte,
+    isActive: emp.isActive,
+    overheadAllocs: emp.overheadAllocs.map((alloc) => ({
+      overheadTypeId: alloc.overheadTypeId,
+      share: alloc.share,
+      overheadType: {
+        isActive: alloc.overheadType.isActive,
+      },
+    })),
+  }));
 
   return (
     <div className="space-y-6">

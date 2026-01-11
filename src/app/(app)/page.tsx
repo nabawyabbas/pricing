@@ -34,6 +34,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { ViewSelector } from "@/components/ViewSelector";
+import {
+  getEmployeeOverrides,
+  getOverheadTypeOverrides,
+  computeEffectiveEmployeeActive,
+  computeEffectiveOverheadTypeActive,
+} from "@/lib/views";
+import { getEffectiveSettings } from "@/lib/effective-settings";
+import { getEffectiveOverheadAllocs } from "@/lib/effective-allocations";
 
 // Load all data efficiently
 async function getTechStacks() {
@@ -68,24 +77,6 @@ async function getOverheadTypes(): Promise<OverheadType[]> {
   }));
 }
 
-async function getSettings(): Promise<Settings> {
-  const settings = await db.setting.findMany();
-  const settingsMap: Settings = {};
-  settings.forEach((setting) => {
-    if (setting.valueType === "float" || setting.valueType === "number") {
-      settingsMap[setting.key] = Number.parseFloat(setting.value);
-    } else if (setting.valueType === "integer") {
-      settingsMap[setting.key] = Number.parseInt(setting.value, 10);
-    } else if (setting.valueType === "boolean") {
-      settingsMap[setting.key] = setting.value === "true" ? 1 : 0;
-    } else {
-      const parsed = Number.parseFloat(setting.value);
-      settingsMap[setting.key] = isNaN(parsed) ? 0 : parsed;
-    }
-  });
-  return settingsMap;
-}
-
 // Convert Prisma employee to pricing Employee, filtering inactive allocations
 function convertEmployee(
   emp: {
@@ -108,12 +99,13 @@ function convertEmployee(
       };
     }>;
   },
-  activeOverheadTypeIds: Set<string>
+  effectiveAllocations: Array<{ overheadTypeId: string; share: number }> | undefined
 ): Employee {
-  // Filter allocations to only include those where overheadType is active
-  const activeAllocs = emp.overheadAllocs.filter(
-    (alloc) => activeOverheadTypeIds.has(alloc.overheadTypeId)
-  );
+  // Use effective allocations if provided, otherwise use base allocations
+  const allocations = effectiveAllocations || emp.overheadAllocs.map((alloc) => ({
+    overheadTypeId: alloc.overheadTypeId,
+    share: alloc.share,
+  }));
 
   return {
     id: emp.id,
@@ -126,39 +118,120 @@ function convertEmployee(
     annualBenefits: emp.annualBenefits ? Number(emp.annualBenefits) : null,
     annualBonus: emp.annualBonus ? Number(emp.annualBonus) : null,
     fte: emp.fte,
-    overheadAllocs: activeAllocs.map((alloc) => ({
-      overheadTypeId: alloc.overheadTypeId,
-      share: alloc.share,
-    })),
+    overheadAllocs: allocations,
   };
 }
 
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string }>;
+}) {
+  const params = await searchParams;
+  const viewId = params.view && params.view !== "__base__" ? params.view : null;
+
   const techStacks = await getTechStacks();
   const employeesRaw = await getEmployees();
   const overheadTypesRaw = await getOverheadTypes();
-  const settings = await getSettings();
+  // Use effective settings (global + view overrides)
+  const settings = await getEffectiveSettings(viewId);
 
-  // Get active overhead type IDs from database
+  // Fetch view overrides if viewId is provided
+  const employeeOverrides = viewId ? await getEmployeeOverrides(viewId) : new Map();
+  const overheadTypeOverrides = viewId ? await getOverheadTypeOverrides(viewId) : new Map();
+
+  // Get all overhead types from DB to check base active status
   const allOverheadTypesFromDb = await db.overheadType.findMany({
-    where: { isActive: true },
-    select: { id: true },
+    select: { id: true, isActive: true },
   });
-  const activeOverheadTypeIds = new Set(allOverheadTypesFromDb.map((t) => t.id));
-  const activeOverheadTypes = overheadTypesRaw.filter((t) => activeOverheadTypeIds.has(t.id));
+  const overheadTypeBaseStatus = new Map(
+    allOverheadTypesFromDb.map((t) => [t.id, t.isActive])
+  );
 
-  // Separate active and inactive employees
-  const activeEmployeesRaw = employeesRaw.filter((e) => e.isActive);
-  const inactiveEmployeesRaw = employeesRaw.filter((e) => !e.isActive);
+  // Compute effective active status for all employees and overhead types
+  const employeesWithEffective = employeesRaw.map((emp) => {
+    const override = employeeOverrides.get(emp.id) || null;
+    const effective = computeEffectiveEmployeeActive(emp.isActive, override);
+    return { ...emp, effectiveIsActive: effective.isActive };
+  });
+
+  const overheadTypesWithEffective = overheadTypesRaw.map((type) => {
+    const baseIsActive = overheadTypeBaseStatus.get(type.id) ?? false;
+    const override = overheadTypeOverrides.get(type.id) || null;
+    const effective = computeEffectiveOverheadTypeActive(baseIsActive, override);
+    return { ...type, effectiveIsActive: effective.isActive };
+  });
+
+  // Get effective active overhead type IDs
+  const effectiveActiveOverheadTypeIds = new Set(
+    overheadTypesWithEffective
+      .filter((t) => t.effectiveIsActive)
+      .map((t) => t.id)
+  );
+  const activeOverheadTypes = overheadTypesRaw.filter((t) =>
+    effectiveActiveOverheadTypeIds.has(t.id)
+  );
+
+  // Get effective allocations for all employees
+  const effectiveEmployeeActiveMap = new Map(
+    employeesWithEffective.map((e) => [e.id, e.effectiveIsActive])
+  );
+  const effectiveOverheadTypeActiveMap = new Map(
+    overheadTypesWithEffective.map((t) => [t.id, t.effectiveIsActive])
+  );
+  const effectiveAllocationsMap = await getEffectiveOverheadAllocs(
+    viewId,
+    employeesRaw.map((emp) => ({
+      id: emp.id,
+      name: emp.name,
+      category: emp.category,
+      techStackId: emp.techStackId,
+      grossMonthly: Number(emp.grossMonthly),
+      netMonthly: Number(emp.netMonthly),
+      oncostRate: emp.oncostRate,
+      annualBenefits: emp.annualBenefits ? Number(emp.annualBenefits) : null,
+      annualBonus: emp.annualBonus ? Number(emp.annualBonus) : null,
+      fte: emp.fte,
+      isActive: emp.isActive,
+      overheadAllocs: emp.overheadAllocs.map((alloc) => ({
+        overheadTypeId: alloc.overheadTypeId,
+        share: alloc.share,
+      })),
+    })),
+    overheadTypesRaw,
+    effectiveEmployeeActiveMap,
+    effectiveOverheadTypeActiveMap
+  );
+
+  // Separate active and inactive employees using effectiveIsActive
+  const activeEmployeesRaw = employeesWithEffective.filter((e) => e.effectiveIsActive);
+  const inactiveEmployeesRaw = employeesWithEffective.filter((e) => !e.effectiveIsActive);
   
-  // Convert both active and inactive employees to pricing format
-  const activeEmployees = activeEmployeesRaw.map((emp) => convertEmployee(emp, activeOverheadTypeIds));
-  const inactiveEmployees = inactiveEmployeesRaw.map((emp) => convertEmployee(emp, activeOverheadTypeIds));
+  // Convert both active and inactive employees to pricing format with effective allocations
+  const activeEmployees = activeEmployeesRaw.map((emp) => 
+    convertEmployee(emp, effectiveAllocationsMap.get(emp.id))
+  );
+  const inactiveEmployees = inactiveEmployeesRaw.map((emp) => 
+    convertEmployee(emp, effectiveAllocationsMap.get(emp.id))
+  );
 
-  // Count inactive items for warnings
+  // Count inactive items for warnings (using effective status)
   const inactiveEmployeeCount = inactiveEmployeesRaw.length;
-  const inactiveOverheadCount = overheadTypesRaw.length - activeOverheadTypes.length;
+  const inactiveOverheadCount = overheadTypesWithEffective.filter((t) => !t.effectiveIsActive).length;
+
+  // Fetch views for selector (with error handling in case Prisma Client is stale)
+  let views: Array<{ id: string; name: string }> = [];
+  try {
+    views = await db.pricingView.findMany({
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    });
+  } catch (error) {
+    // If pricingView doesn't exist yet (stale Prisma Client), return empty array
+    console.warn("Could not fetch views:", error);
+    views = [];
+  }
 
   const exchangeRatio = getExchangeRatio(settings);
   const currency: Currency = exchangeRatio && exchangeRatio > 0 ? "USD" : "EGP";
@@ -219,17 +292,29 @@ export default async function DashboardPage() {
     agenticAiByStack.get(stackId)!.push(emp);
   });
 
+  // Get all unique stack IDs from employees (including unassigned)
+  const allStackIds = new Set<string>();
+  devByStack.forEach((_, stackId) => allStackIds.add(stackId));
+  agenticAiByStack.forEach((_, stackId) => allStackIds.add(stackId));
+  
+  // Create a map of stack ID to stack object (including unassigned)
+  const stackMap = new Map(techStacks.map((s) => [s.id, s]));
+  const unassignedStack = { id: "unassigned", name: "Unassigned" };
+  
   // Calculate stack pricing (only active items) - separate rows for DEV and AGENTIC_AI
-  const stackData = techStacks.flatMap((stack) => {
-    const stackDevs = devByStack.get(stack.id) || [];
-    const stackAgenticAi = agenticAiByStack.get(stack.id) || [];
+  const stackData = Array.from(allStackIds).flatMap((stackId) => {
+    const stack = stackMap.get(stackId) || unassignedStack;
+    const stackDevs = devByStack.get(stackId) || [];
+    const stackAgenticAi = agenticAiByStack.get(stackId) || [];
     const results = [];
 
     // Add DEV row if there are DEV employees
     if (stackDevs.length > 0) {
+      // For unassigned, use null techStackId; otherwise use the stackId
+      const techStackIdForCalc = stackId === "unassigned" ? null : stackId;
       const devResult = calculatePricingForCategory(
         "DEV",
-        stack.id,
+        techStackIdForCalc,
         activeEmployees,
         activeOverheadTypes,
         settings
@@ -251,9 +336,11 @@ export default async function DashboardPage() {
 
     // Add AGENTIC_AI row if there are AGENTIC_AI employees
     if (stackAgenticAi.length > 0) {
+      // For unassigned, use null techStackId; otherwise use the stackId
+      const techStackIdForCalc = stackId === "unassigned" ? null : stackId;
       const agenticAiResult = calculatePricingForCategory(
         "AGENTIC_AI",
-        stack.id,
+        techStackIdForCalc,
         activeEmployees,
         activeOverheadTypes,
         settings
@@ -306,6 +393,10 @@ export default async function DashboardPage() {
 
   return (
     <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-3xl font-bold">Dashboard</h1>
+          <ViewSelector views={views} />
+        </div>
       {/* Inactive Items Warning */}
       {(inactiveEmployeeCount > 0 || inactiveOverheadCount > 0) && (
         <Card className="border-yellow-500 bg-yellow-50">
@@ -610,7 +701,7 @@ export default async function DashboardPage() {
                           <TableHead className="text-right">Dev Cost</TableHead>
                           <TableHead className="text-right font-semibold">QA Add-on/hr</TableHead>
                           <TableHead className="text-right font-semibold">BA Add-on/hr</TableHead>
-                          <TableHead className="text-right font-semibold">COGS</TableHead>
+                          <TableHead className="text-right font-semibold bg-primary/10 border-l-2 border-r-2 border-primary">COGS</TableHead>
                           {activeOverheadTypes.map((type) => {
                             const allocationSum = getOverheadAllocationSum(type.id, activeEmployees);
                             const isValid = isAllocationValid(allocationSum);
@@ -627,6 +718,9 @@ export default async function DashboardPage() {
                           })}
                           <TableHead className="text-right font-semibold">Total Overheads/hr</TableHead>
                           <TableHead className="text-right font-semibold">Total Releaseable Cost/hr</TableHead>
+                          <TableHead className="text-right">Margin</TableHead>
+                          <TableHead className="text-right">Risk</TableHead>
+                          <TableHead className="text-right font-bold">Final Price/hr</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -686,7 +780,7 @@ export default async function DashboardPage() {
                                   </span>
                                 </div>
                               </TableCell>
-                              <TableCell className="text-right font-semibold">
+                              <TableCell className="text-right font-semibold bg-primary/10 border-l-2 border-r-2 border-primary">
                                 <div className="flex flex-col items-end">
                                   <span>{formatMoney(cogs, currency)}</span>
                                   <span className="text-xs text-muted-foreground">
@@ -716,6 +810,22 @@ export default async function DashboardPage() {
                                 {totalReleaseableCost !== null
                                   ? formatMoney(totalReleaseableCost, currency)
                                   : "—"}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {formatPercent(settings.margin ?? 0, "decimal")}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {formatPercent(settings.risk ?? 0, "decimal")}
+                              </TableCell>
+                              <TableCell className="text-right font-bold">
+                                {(() => {
+                                  const margin = settings.margin ?? 0.2;
+                                  const risk = settings.risk ?? 0.1;
+                                  const finalPrice = totalReleaseableCost !== null
+                                    ? totalReleaseableCost * (1 + margin) * (1 + risk)
+                                    : null;
+                                  return finalPrice !== null ? formatMoney(finalPrice, currency) : "—";
+                                })()}
                               </TableCell>
                             </TableRow>
                           );
@@ -756,6 +866,9 @@ export default async function DashboardPage() {
                           })}
                           <TableHead className="text-right font-semibold">Total Overheads/hr</TableHead>
                           <TableHead className="text-right font-semibold">Total Releaseable Cost/hr</TableHead>
+                          <TableHead className="text-right">Margin</TableHead>
+                          <TableHead className="text-right">Risk</TableHead>
+                          <TableHead className="text-right font-bold">Final Price/hr</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -815,6 +928,22 @@ export default async function DashboardPage() {
                                 {totalReleaseableCost !== null
                                   ? formatMoney(totalReleaseableCost, currency)
                                   : "—"}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {formatPercent(settings.margin ?? 0, "decimal")}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {formatPercent(settings.risk ?? 0, "decimal")}
+                              </TableCell>
+                              <TableCell className="text-right font-bold">
+                                {(() => {
+                                  const margin = settings.margin ?? 0.2;
+                                  const risk = settings.risk ?? 0.1;
+                                  const finalPrice = totalReleaseableCost !== null
+                                    ? totalReleaseableCost * (1 + margin) * (1 + risk)
+                                    : null;
+                                  return finalPrice !== null ? formatMoney(finalPrice, currency) : "—";
+                                })()}
                               </TableCell>
                             </TableRow>
                           );
@@ -895,6 +1024,6 @@ export default async function DashboardPage() {
             </CardContent>
           </Card>
         )}
-    </div>
+      </div>
   );
 }

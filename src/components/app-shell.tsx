@@ -16,6 +16,7 @@ const navItems = [
   { href: "/employees", label: "Employees" },
   { href: "/overheads", label: "Overheads" },
   { href: "/settings", label: "Settings" },
+  { href: "/views", label: "Views" },
   { href: "/results", label: "Results" },
 ];
 
@@ -25,6 +26,7 @@ const pageTitles: Record<string, string> = {
   "/employees": "Employees",
   "/overheads": "Overhead Management",
   "/settings": "Settings",
+  "/views": "Pricing Views",
   "/results": "Pricing Results",
 };
 
@@ -41,7 +43,7 @@ export function AppShell({ children }: AppShellProps) {
   const NavLinks = () => (
     <nav className="space-y-1">
       {navItems.map((item) => {
-        const isActive = pathname === item.href;
+        const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href + "/"));
         return (
           <Link
             key={item.href}

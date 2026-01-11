@@ -4,7 +4,7 @@ import { EnhancedAllocationGrid } from "./EnhancedAllocationGrid";
 import { type Settings } from "@/lib/pricing";
 
 async function getOverheadTypes() {
-  return await db.overheadType.findMany({
+  const types = await db.overheadType.findMany({
     orderBy: { name: "asc" },
     include: {
       _count: {
@@ -12,10 +12,21 @@ async function getOverheadTypes() {
       },
     },
   });
+  // Convert Prisma Decimal objects to numbers for Client Component
+  return types.map((type) => ({
+    id: type.id,
+    name: type.name,
+    amount: Number(type.amount),
+    period: type.period,
+    isActive: type.isActive,
+    createdAt: type.createdAt,
+    updatedAt: type.updatedAt,
+    _count: type._count,
+  }));
 }
 
 async function getEmployees() {
-  return await db.employee.findMany({
+  const employeesRaw = await db.employee.findMany({
     include: {
       techStack: true,
       overheadAllocs: {
@@ -26,6 +37,24 @@ async function getEmployees() {
     },
     orderBy: [{ category: "asc" }, { name: "asc" }],
   });
+  // Convert Prisma Decimal objects to numbers for Client Component
+  return employeesRaw.map((emp) => ({
+    id: emp.id,
+    name: emp.name,
+    category: emp.category,
+    isActive: emp.isActive,
+    techStack: emp.techStack,
+    grossMonthly: Number(emp.grossMonthly),
+    overheadAllocs: emp.overheadAllocs.map((alloc) => ({
+      id: alloc.id,
+      overheadTypeId: alloc.overheadTypeId,
+      share: alloc.share,
+      overheadType: {
+        name: alloc.overheadType.name,
+        isActive: alloc.overheadType.isActive,
+      },
+    })),
+  }));
 }
 
 async function getSettings(): Promise<Settings> {

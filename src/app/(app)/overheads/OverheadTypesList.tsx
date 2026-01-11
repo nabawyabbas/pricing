@@ -41,7 +41,6 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
-import { Prisma } from "@prisma/client";
 import {
   createOverheadType,
   updateOverheadType,
@@ -56,7 +55,7 @@ interface OverheadTypesListProps {
   overheadTypes: Array<{
     id: string;
     name: string;
-    amount: Prisma.Decimal;
+    amount: number;
     period: string;
     isActive: boolean;
     _count: { allocations: number };

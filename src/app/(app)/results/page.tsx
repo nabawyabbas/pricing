@@ -3,31 +3,31 @@ import {
   type Employee as PricingEmployee,
   type OverheadType,
   type Settings,
+  type Breakdown,
   getExchangeRatio,
   calculateFinalPrice,
 } from "@/lib/pricing";
 import {
-  computeDevStackRow,
-  computeAgenticStackRow,
   computeGlobalQaAddOnPerReleaseHr,
   computeGlobalBaAddOnPerReleaseHr,
-  getOverheadAllocationSum,
-  isAllocationValid,
 } from "@/lib/dashboard";
+import { calculatePricingWithBreakdowns } from "@/lib/pricing";
+import { ResultsTables } from "./ResultsTables";
 import { Prisma } from "@prisma/client";
 import { ResultsActions } from "./ResultsActions";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { AlertCircle } from "lucide-react";
-import { formatMoney, formatPercent, formatNumber, formatPct, type Currency } from "@/lib/format";
+import { formatMoney, formatPercent, formatNumber, type Currency } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
+import { ViewSelector } from "@/components/ViewSelector";
+import {
+  getEmployeeOverrides,
+  getOverheadTypeOverrides,
+  computeEffectiveEmployeeActive,
+  computeEffectiveOverheadTypeActive,
+} from "@/lib/views";
+import { getEffectiveSettings } from "@/lib/effective-settings";
+import { getEffectiveOverheadAllocs } from "@/lib/effective-allocations";
 
 async function getTechStacks() {
   return await db.techStack.findMany({
@@ -50,7 +50,6 @@ async function getEmployees() {
 
 async function getOverheadTypes(): Promise<OverheadType[]> {
   const types = await db.overheadType.findMany({
-    where: { isActive: true },
     orderBy: { name: "asc" },
   });
   return types.map((type) => ({
@@ -59,26 +58,6 @@ async function getOverheadTypes(): Promise<OverheadType[]> {
     amount: Number(type.amount),
     period: type.period as "annual" | "monthly" | "quarterly",
   }));
-}
-
-async function getSettings(): Promise<Settings> {
-  const settings = await db.setting.findMany();
-  const settingsMap: Settings = {};
-  settings.forEach((setting) => {
-    // Parse value based on type
-    if (setting.valueType === "float" || setting.valueType === "number") {
-      settingsMap[setting.key] = Number.parseFloat(setting.value);
-    } else if (setting.valueType === "integer") {
-      settingsMap[setting.key] = Number.parseInt(setting.value, 10);
-    } else if (setting.valueType === "boolean") {
-      settingsMap[setting.key] = setting.value === "true" ? 1 : 0;
-    } else {
-      // For string, try to parse as number, fallback to 0
-      const parsed = Number.parseFloat(setting.value);
-      settingsMap[setting.key] = isNaN(parsed) ? 0 : parsed;
-    }
-  });
-  return settingsMap;
 }
 
 function convertEmployee(
@@ -102,12 +81,13 @@ function convertEmployee(
       };
     }>;
   },
-  activeOverheadTypeIds: Set<string>
+  effectiveAllocations: Array<{ overheadTypeId: string; share: number }> | undefined
 ): PricingEmployee {
-  // Filter allocations to only include those where overheadType is active
-  const activeAllocs = emp.overheadAllocs.filter(
-    (alloc) => activeOverheadTypeIds.has(alloc.overheadTypeId)
-  );
+  // Use effective allocations if provided, otherwise use base allocations
+  const allocations = effectiveAllocations || emp.overheadAllocs.map((alloc) => ({
+    overheadTypeId: alloc.overheadTypeId,
+    share: alloc.share,
+  }));
 
   return {
     id: emp.id,
@@ -120,31 +100,104 @@ function convertEmployee(
     annualBenefits: emp.annualBenefits ? Number(emp.annualBenefits) : null,
     annualBonus: emp.annualBonus ? Number(emp.annualBonus) : null,
     fte: emp.fte,
-    overheadAllocs: activeAllocs.map((alloc) => ({
-      overheadTypeId: alloc.overheadTypeId,
-      share: alloc.share,
-    })),
+    overheadAllocs: allocations,
   };
 }
 
 
-export default async function ResultsPage() {
+export default async function ResultsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string }>;
+}) {
+  const params = await searchParams;
+  const viewId = params.view && params.view !== "__base__" ? params.view : null;
+
   const techStacks = await getTechStacks();
   const employeesRaw = await getEmployees();
-  const overheadTypes = await getOverheadTypes();
-  const settings = await getSettings();
+  const overheadTypesRaw = await getOverheadTypes();
+  // Use effective settings (global + view overrides)
+  const settings = await getEffectiveSettings(viewId);
 
-  // Get active overhead type IDs
-  const activeOverheadTypeIds = new Set(overheadTypes.map((t) => t.id));
+  // Fetch view overrides if viewId is provided
+  const employeeOverrides = viewId ? await getEmployeeOverrides(viewId) : new Map();
+  const overheadTypeOverrides = viewId ? await getOverheadTypeOverrides(viewId) : new Map();
 
-  // Filter to active employees only
-  const activeEmployeesRaw = employeesRaw.filter((e) => e.isActive);
-  const pricingEmployees = activeEmployeesRaw.map((emp) => convertEmployee(emp, activeOverheadTypeIds));
+  // Get all overhead types from DB to check base active status
+  const allOverheadTypes = await db.overheadType.findMany({
+    orderBy: { name: "asc" },
+  });
 
-  // Count inactive items for warnings
-  const inactiveEmployeeCount = employeesRaw.filter((e) => !e.isActive).length;
-  const allOverheadTypes = await db.overheadType.findMany();
-  const inactiveOverheadCount = allOverheadTypes.filter((t) => !t.isActive).length;
+  // Compute effective active status
+  const employeesWithEffective = employeesRaw.map((emp) => {
+    const override = employeeOverrides.get(emp.id) || null;
+    const effective = computeEffectiveEmployeeActive(emp.isActive, override);
+    return { ...emp, effectiveIsActive: effective.isActive };
+  });
+
+  const overheadTypesWithEffective = overheadTypesRaw.map((type) => {
+    const dbType = allOverheadTypes.find((t) => t.id === type.id);
+    if (!dbType) return { ...type, effectiveIsActive: false };
+    const override = overheadTypeOverrides.get(type.id) || null;
+    const effective = computeEffectiveOverheadTypeActive(dbType.isActive, override);
+    return { ...type, effectiveIsActive: effective.isActive };
+  });
+
+  // Get effective allocations for all employees
+  const effectiveEmployeeActiveMap = new Map(
+    employeesWithEffective.map((e) => [e.id, e.effectiveIsActive])
+  );
+  const effectiveOverheadTypeActiveMap = new Map(
+    overheadTypesWithEffective.map((t) => [t.id, t.effectiveIsActive])
+  );
+  const effectiveAllocationsMap = await getEffectiveOverheadAllocs(
+    viewId,
+    employeesRaw.map((emp) => ({
+      id: emp.id,
+      name: emp.name,
+      category: emp.category,
+      techStackId: emp.techStackId,
+      grossMonthly: Number(emp.grossMonthly),
+      netMonthly: Number(emp.netMonthly),
+      oncostRate: emp.oncostRate,
+      annualBenefits: emp.annualBenefits ? Number(emp.annualBenefits) : null,
+      annualBonus: emp.annualBonus ? Number(emp.annualBonus) : null,
+      fte: emp.fte,
+      isActive: emp.isActive,
+      overheadAllocs: emp.overheadAllocs.map((alloc) => ({
+        overheadTypeId: alloc.overheadTypeId,
+        share: alloc.share,
+      })),
+    })),
+    overheadTypesRaw,
+    effectiveEmployeeActiveMap,
+    effectiveOverheadTypeActiveMap
+  );
+
+  // Filter to effective active employees and effective active overhead types
+  const activeEmployeesRaw = employeesWithEffective.filter((e) => e.effectiveIsActive);
+  const activeOverheadTypes = overheadTypesWithEffective.filter((t) => t.effectiveIsActive);
+  const pricingEmployees = activeEmployeesRaw.map((emp) => {
+    const effectiveAllocs = effectiveAllocationsMap.get(emp.id) || [];
+    return convertEmployee(emp, effectiveAllocs);
+  });
+
+  // Count inactive items for warnings (using effective status)
+  const inactiveEmployeeCount = employeesWithEffective.filter((e) => !e.effectiveIsActive).length;
+  const inactiveOverheadCount = overheadTypesWithEffective.filter((t) => !t.effectiveIsActive).length;
+
+  // Fetch views for selector (with error handling in case Prisma Client is stale)
+  let views: Array<{ id: string; name: string }> = [];
+  try {
+    views = await db.pricingView.findMany({
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    });
+  } catch (error) {
+    // If pricingView doesn't exist yet (stale Prisma Client), return empty array
+    console.warn("Could not fetch views:", error);
+    views = [];
+  }
 
   // Check if required settings exist
   const requiredSettings = [
@@ -157,7 +210,7 @@ export default async function ResultsPage() {
   ];
   const missingSettings = requiredSettings.filter((key) => settings[key] === undefined);
 
-  if (overheadTypes.length === 0 || missingSettings.length > 0) {
+  if (activeOverheadTypes.length === 0 || missingSettings.length > 0) {
     return (
       <Card className="border-yellow-500">
         <CardHeader>
@@ -169,8 +222,8 @@ export default async function ResultsPage() {
         <CardContent>
           <CardDescription>
             Please configure{" "}
-            {overheadTypes.length === 0 && "Overhead Types"}
-            {overheadTypes.length === 0 && missingSettings.length > 0 && " and "}
+            {activeOverheadTypes.length === 0 && "Overhead Types"}
+            {activeOverheadTypes.length === 0 && missingSettings.length > 0 && " and "}
             {missingSettings.length > 0 && `Settings (missing: ${missingSettings.join(", ")})`}
             {" "}before viewing results.
           </CardDescription>
@@ -203,8 +256,76 @@ export default async function ResultsPage() {
   });
 
   // Compute global QA/BA add-ons once
-  const qaAddOn = computeGlobalQaAddOnPerReleaseHr(qaEmployees, overheadTypes, settings);
-  const baAddOn = computeGlobalBaAddOnPerReleaseHr(baEmployees, overheadTypes, settings);
+  const qaAddOn = computeGlobalQaAddOnPerReleaseHr(qaEmployees, activeOverheadTypes, settings);
+  const baAddOn = computeGlobalBaAddOnPerReleaseHr(baEmployees, activeOverheadTypes, settings);
+
+  // Calculate breakdowns for each stack
+  const devBreakdowns = new Map<string, Map<string, Breakdown>>();
+  const agenticBreakdowns = new Map<string, Map<string, Breakdown>>();
+
+  // Calculate DEV breakdowns
+  for (const stack of techStacks) {
+    const stackDevs = devByStack.get(stack.id) || [];
+    if (stackDevs.length > 0) {
+      const { breakdowns } = calculatePricingWithBreakdowns(
+        "DEV",
+        stack.id,
+        pricingEmployees,
+        activeOverheadTypes,
+        settings
+      );
+      devBreakdowns.set(stack.id, breakdowns);
+    }
+  }
+
+  // Calculate AGENTIC_AI breakdowns
+  for (const stack of techStacks) {
+    const stackAgenticAi = agenticAiByStack.get(stack.id) || [];
+    if (stackAgenticAi.length > 0) {
+      const { breakdowns } = calculatePricingWithBreakdowns(
+        "AGENTIC_AI",
+        stack.id,
+        pricingEmployees,
+        activeOverheadTypes,
+        settings
+      );
+      agenticBreakdowns.set(stack.id, breakdowns);
+    }
+  }
+
+  // Calculate QA/BA add-on breakdowns (global, not per stack)
+  // We need to calculate these separately since they're global, not per-stack
+  // Use any stack with DEV employees to get the breakdowns (they're the same for all stacks)
+  let qaAddOnBreakdown: Breakdown | null = null;
+  let baAddOnBreakdown: Breakdown | null = null;
+  
+  // Find a stack with DEV employees to calculate QA/BA breakdowns
+  const stackWithDev = techStacks.find((stack) => {
+    const stackDevs = devByStack.get(stack.id) || [];
+    return stackDevs.length > 0;
+  });
+  
+  if (stackWithDev && qaEmployees.length > 0) {
+    const tempResult = calculatePricingWithBreakdowns(
+      "DEV",
+      stackWithDev.id,
+      pricingEmployees,
+      activeOverheadTypes,
+      settings
+    );
+    qaAddOnBreakdown = tempResult.breakdowns.get("qa_addon_hr") ?? null;
+  }
+  
+  if (stackWithDev && baEmployees.length > 0) {
+    const tempResult = calculatePricingWithBreakdowns(
+      "DEV",
+      stackWithDev.id,
+      pricingEmployees,
+      activeOverheadTypes,
+      settings
+    );
+    baAddOnBreakdown = tempResult.breakdowns.get("ba_addon_hr") ?? null;
+  }
 
   // Get settings with defaults and track missing ones
   // Defaults: 100/160/0.5/0.25/0/0 (dev hours/standard hours/qa ratio/ba ratio/margin/risk)
@@ -229,6 +350,10 @@ export default async function ResultsPage() {
     <>
       <ResultsActions settings={settings} />
       <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-3xl font-bold">Pricing Results</h1>
+          <ViewSelector views={views} />
+        </div>
         {/* Results Summary */}
         <Card>
           <CardHeader>
@@ -358,239 +483,21 @@ export default async function ResultsPage() {
           </Card>
         )}
 
-        {/* DEV Pricing Table */}
-        <Card>
-          <CardHeader>
-            <CardTitle>DEV Pricing (per releaseable hour)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {overheadTypes.length === 0 ? (
-              <p className="text-muted-foreground italic">No active overhead types found.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="sticky left-0 bg-background z-10">Stack</TableHead>
-                      <TableHead className="text-right">Raw Cost/hr</TableHead>
-                      {overheadTypes.map((type) => {
-                        const allocationSum = getOverheadAllocationSum(type.id, pricingEmployees);
-                        const isValid = isAllocationValid(allocationSum);
-                        return (
-                          <TableHead key={type.id} className="text-right">
-                            <div className="flex flex-col items-end">
-                              <span className="font-medium">{type.name}</span>
-                              {!isValid && (
-                                <span className="text-xs text-destructive">⚠️ {formatPercent(allocationSum, "decimal")}</span>
-                              )}
-                            </div>
-                          </TableHead>
-                        );
-                      })}
-                      <TableHead className="text-right font-semibold">Total Overheads/hr</TableHead>
-                      <TableHead className="text-right font-semibold">QA Add-on/hr</TableHead>
-                      <TableHead className="text-right font-semibold">BA Add-on/hr</TableHead>
-                      <TableHead className="text-right font-semibold">Total Releaseable Cost/hr</TableHead>
-                      <TableHead className="text-right font-semibold">Final Price/hr</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {techStacks.map((stack) => {
-                      const stackDevs = devByStack.get(stack.id) || [];
-                      const rowData = computeDevStackRow(
-                        stack.id,
-                        stackDevs,
-                        overheadTypes,
-                        qaAddOn.total,
-                        baAddOn.total,
-                        settings
-                      );
-
-                      if (!rowData) {
-                        return null;
-                      }
-
-                      const totalReleaseableCost = rowData.totalReleaseableCost;
-                      const finalPrice = totalReleaseableCost !== null
-                        ? calculateFinalPrice(totalReleaseableCost, settings)
-                        : null;
-
-                      // Calculate percentages for each component
-                      const calculatePct = (component: number | null): number | null => {
-                        if (totalReleaseableCost === null || totalReleaseableCost === 0 || component === null) {
-                          return null;
-                        }
-                        return (component / totalReleaseableCost) * 100;
-                      };
-
-                      return (
-                        <TableRow key={stack.id}>
-                          <TableCell className="sticky left-0 bg-background z-10 font-medium">{stack.name}</TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex flex-col items-end">
-                              <span>{rowData.rawCost !== null ? formatMoney(rowData.rawCost, currency) : "—"}</span>
-                              <span className="text-xs text-muted-foreground">
-                                {formatPct(calculatePct(rowData.rawCost))}
-                              </span>
-                            </div>
-                          </TableCell>
-                          {rowData.overheads.map((overhead, ohIdx) => (
-                            <TableCell key={overheadTypes[ohIdx].id} className="text-right">
-                              <div className="flex flex-col items-end">
-                                <span>{overhead !== null ? formatMoney(overhead, currency) : "—"}</span>
-                                <span className="text-xs text-muted-foreground">
-                                  {formatPct(calculatePct(overhead))}
-                                </span>
-                              </div>
-                            </TableCell>
-                          ))}
-                          <TableCell className="text-right font-semibold">
-                            <div className="flex flex-col items-end">
-                              <span>{formatMoney(rowData.totalOverheads, currency)}</span>
-                              <span className="text-xs text-muted-foreground">
-                                {formatPct(calculatePct(rowData.totalOverheads))}
-                              </span>
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-right font-semibold">
-                            <div className="flex flex-col items-end">
-                              <span>{formatMoney(rowData.qaAddOn, currency)}</span>
-                              <span className="text-xs text-muted-foreground">
-                                {formatPct(calculatePct(rowData.qaAddOn))}
-                              </span>
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-right font-semibold">
-                            <div className="flex flex-col items-end">
-                              <span>{formatMoney(rowData.baAddOn, currency)}</span>
-                              <span className="text-xs text-muted-foreground">
-                                {formatPct(calculatePct(rowData.baAddOn))}
-                              </span>
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-right font-semibold">
-                            {totalReleaseableCost !== null
-                              ? formatMoney(totalReleaseableCost, currency)
-                              : "—"}
-                          </TableCell>
-                          <TableCell className="text-right font-semibold text-primary">
-                            {finalPrice !== null ? formatMoney(finalPrice, currency) : "—"}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* AGENTIC_AI Pricing Table */}
-        {agenticAiByStack.size > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle>AGENTIC_AI Pricing (per releaseable hour)</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="sticky left-0 bg-background z-10">Stack</TableHead>
-                      <TableHead className="text-right">Raw Cost/hr</TableHead>
-                      {overheadTypes.map((type) => {
-                        const allocationSum = getOverheadAllocationSum(type.id, pricingEmployees);
-                        const isValid = isAllocationValid(allocationSum);
-                        return (
-                          <TableHead key={type.id} className="text-right">
-                            <div className="flex flex-col items-end">
-                              <span className="font-medium">{type.name}</span>
-                              {!isValid && (
-                                <span className="text-xs text-destructive">⚠️ {formatPercent(allocationSum, "decimal")}</span>
-                              )}
-                            </div>
-                          </TableHead>
-                        );
-                      })}
-                      <TableHead className="text-right font-semibold">Total Overheads/hr</TableHead>
-                      <TableHead className="text-right font-semibold">Total Releaseable Cost/hr</TableHead>
-                      <TableHead className="text-right font-semibold">Final Price/hr</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {techStacks.map((stack) => {
-                      const stackAgenticAi = agenticAiByStack.get(stack.id) || [];
-                      const rowData = computeAgenticStackRow(
-                        stack.id,
-                        stackAgenticAi,
-                        overheadTypes,
-                        settings
-                      );
-
-                      if (!rowData) {
-                        return null;
-                      }
-
-                      const totalReleaseableCost = rowData.totalReleaseableCost;
-                      const finalPrice = totalReleaseableCost !== null
-                        ? calculateFinalPrice(totalReleaseableCost, settings)
-                        : null;
-
-                      // Calculate percentages for each component
-                      const calculatePct = (component: number | null): number | null => {
-                        if (totalReleaseableCost === null || totalReleaseableCost === 0 || component === null) {
-                          return null;
-                        }
-                        return (component / totalReleaseableCost) * 100;
-                      };
-
-                      return (
-                        <TableRow key={stack.id}>
-                          <TableCell className="sticky left-0 bg-background z-10 font-medium">{stack.name}</TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex flex-col items-end">
-                              <span>{rowData.rawCost !== null ? formatMoney(rowData.rawCost, currency) : "—"}</span>
-                              <span className="text-xs text-muted-foreground">
-                                {formatPct(calculatePct(rowData.rawCost))}
-                              </span>
-                            </div>
-                          </TableCell>
-                          {rowData.overheads.map((overhead, ohIdx) => (
-                            <TableCell key={overheadTypes[ohIdx].id} className="text-right">
-                              <div className="flex flex-col items-end">
-                                <span>{overhead !== null ? formatMoney(overhead, currency) : "—"}</span>
-                                <span className="text-xs text-muted-foreground">
-                                  {formatPct(calculatePct(overhead))}
-                                </span>
-                              </div>
-                            </TableCell>
-                          ))}
-                          <TableCell className="text-right font-semibold">
-                            <div className="flex flex-col items-end">
-                              <span>{formatMoney(rowData.totalOverheads, currency)}</span>
-                              <span className="text-xs text-muted-foreground">
-                                {formatPct(calculatePct(rowData.totalOverheads))}
-                              </span>
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-right font-semibold">
-                            {totalReleaseableCost !== null
-                              ? formatMoney(totalReleaseableCost, currency)
-                              : "—"}
-                          </TableCell>
-                          <TableCell className="text-right font-semibold text-primary">
-                            {finalPrice !== null ? formatMoney(finalPrice, currency) : "—"}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+        <ResultsTables
+          techStacks={techStacks}
+          devByStack={devByStack}
+          agenticAiByStack={agenticAiByStack}
+          activeOverheadTypes={activeOverheadTypes}
+          pricingEmployees={pricingEmployees}
+          settings={settings}
+          currency={currency}
+          devBreakdowns={devBreakdowns}
+          agenticBreakdowns={agenticBreakdowns}
+          qaAddOnTotal={qaAddOn.total}
+          baAddOnTotal={baAddOn.total}
+          qaAddOnBreakdown={qaAddOnBreakdown}
+          baAddOnBreakdown={baAddOnBreakdown}
+        />
       </div>
     </>
   );

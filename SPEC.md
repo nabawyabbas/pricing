@@ -122,11 +122,26 @@ baRawAddOnPerRelHour = baRatio * baRawPerBaHour
 DEV COGS per releaseable hour (per stack S):
 COGS(S) = devRawCostPerRelHour(S) + qaRawAddOnPerRelHour + baRawAddOnPerRelHour
 
-Overheads per releaseable hour (DEV stack S):
-devOverheadsPerRelHour(S) = devCostPerRelHour(S) - devRawCostPerRelHour(S)
+Note: QA Add-on/hr and BA Add-on/hr columns in dashboard show raw costs only (qaRawAddOnPerRelHour and baRawAddOnPerRelHour).
+
+Overhead per releaseable hour for each overhead type O (DEV stack S):
+For each overhead type O:
+  - DEV overhead per rel hour (type O, stack S) = calculated from DEV employees in stack S allocations to overhead type O
+  - QA overhead per rel hour (type O):
+    qaOverheadMonthly(O) = overheadMonthly(O) * sum(share for active QA employees allocated to O)
+    qaPerQaHour(O) = qaOverheadMonthly(O) / standardHoursPerMonth
+    qaOverheadPerRelHour(O) = qaRatio * qaPerQaHour(O)
+  - BA overhead per rel hour (type O):
+    baOverheadMonthly(O) = overheadMonthly(O) * sum(share for active BA employees allocated to O)
+    baPerBaHour(O) = baOverheadMonthly(O) / standardHoursPerMonth
+    baOverheadPerRelHour(O) = baRatio * baPerBaHour(O)
+  - Total overhead per rel hour (type O, stack S) = devOverheadPerRelHour(O, S) + qaOverheadPerRelHour(O) + baOverheadPerRelHour(O)
+
+Total overheads per releaseable hour (DEV stack S):
+totalOverheadsPerRelHour(S) = sum(total overhead per rel hour for each overhead type O)
 
 Total releaseable cost per hour (DEV stack S):
-totalReleaseableCost(S) = COGS(S) + devOverheadsPerRelHour(S)
+totalReleaseableCost(S) = COGS(S) + totalOverheadsPerRelHour(S)
 
 Percent of total for any component X:
 pct(X) = X / totalReleaseableCost(S)

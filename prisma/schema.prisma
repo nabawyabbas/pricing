@@ -54,6 +54,7 @@ model Employee {
   annualBenefits Decimal?                  @db.Decimal(10, 2)
   annualBonus    Decimal?                  @db.Decimal(10, 2)
   fte            Float                     @default(1.0)
+  hiringDate     DateTime?
   isActive       Boolean                   @default(true)
   overheadAllocs OverheadAllocation[]
   activeOverrides EmployeeActiveOverride[]

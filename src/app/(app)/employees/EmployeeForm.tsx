@@ -164,6 +164,15 @@ export function EmployeeForm({ techStacks, settings }: EmployeeFormProps) {
                 disabled={isPending}
               />
             </div>
+            <div>
+              <Label htmlFor="hiringDate">Hiring Date</Label>
+              <Input
+                id="hiringDate"
+                name="hiringDate"
+                type="date"
+                disabled={isPending}
+              />
+            </div>
             <div className="flex items-center gap-2">
               <input
                 type="checkbox"

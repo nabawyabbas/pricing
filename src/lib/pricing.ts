@@ -17,6 +17,7 @@ export interface Employee {
   annualBenefits: number | null; // in EGP
   annualBonus: number | null; // in EGP
   fte: number;
+  hiringDate?: Date | null;
   overheadAllocs?: {
     overheadTypeId: string;
     share: number;

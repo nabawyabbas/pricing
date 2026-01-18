@@ -69,6 +69,7 @@ interface EmployeeTableProps {
     annualBenefits: any | null;
     annualBonus: any | null;
     fte: number;
+    hiringDate: Date | null;
     isActive: boolean;
     overheadAllocs: Array<{
       overheadTypeId: string;
@@ -336,6 +337,7 @@ export function EmployeeTable({
                 <TableHead className="text-right">Gross Monthly</TableHead>
                 <TableHead className="text-right">Net Monthly</TableHead>
                 <TableHead className="text-right">FTE</TableHead>
+                <TableHead>Hiring Date</TableHead>
                 <TableHead className="text-right">Monthly Cost ({currency})</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="w-[50px]"></TableHead>
@@ -344,7 +346,7 @@ export function EmployeeTable({
             <TableBody>
               {filteredEmployees.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
                     No employees found
                   </TableCell>
                 </TableRow>
@@ -363,6 +365,11 @@ export function EmployeeTable({
                         {formatMoney(Number(employee.netMonthly), "EGP")}
                       </TableCell>
                       <TableCell className="text-right">{formatNumber(employee.fte, 2)}</TableCell>
+                      <TableCell>
+                        {employee.hiringDate
+                          ? new Date(employee.hiringDate).toLocaleDateString()
+                          : "-"}
+                      </TableCell>
                       <TableCell className="text-right font-medium">
                         {formatMoney(cost, currency)}
                       </TableCell>
@@ -427,7 +434,7 @@ export function EmployeeTable({
                 <TableCell colSpan={3} className="font-medium">
                   Summary (Active Only)
                 </TableCell>
-                <TableCell colSpan={3} className="text-right">
+                <TableCell colSpan={4} className="text-right">
                   DEV: {activeCounts.DEV} | QA: {activeCounts.QA} | BA: {activeCounts.BA} | Agentic AI: {activeCounts.AGENTIC_AI}
                 </TableCell>
                 <TableCell className="text-right font-semibold">
@@ -583,6 +590,19 @@ export function EmployeeTable({
                     step="0.01"
                     min="0"
                     defaultValue={editingEmployee.annualBonus ? Number(editingEmployee.annualBonus) : ""}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="edit-hiringDate">Hiring Date</Label>
+                  <Input
+                    id="edit-hiringDate"
+                    name="hiringDate"
+                    type="date"
+                    defaultValue={
+                      editingEmployee.hiringDate
+                        ? new Date(editingEmployee.hiringDate).toISOString().split("T")[0]
+                        : ""
+                    }
                   />
                 </div>
                 <div className="flex items-center gap-2">

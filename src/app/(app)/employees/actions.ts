@@ -19,6 +19,12 @@ function parseBoolean(value: string | null): boolean {
   return value === "true" || value === "on";
 }
 
+function parseDate(value: string | null): Date | null {
+  if (!value || value.trim() === "") return null;
+  const parsed = new Date(value);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
 export async function createEmployee(formData: FormData) {
   const name = formData.get("name") as string;
   const category = formData.get("category") as string;
@@ -29,6 +35,7 @@ export async function createEmployee(formData: FormData) {
   const annualBenefits = formData.get("annualBenefits") as string | null;
   const annualBonus = formData.get("annualBonus") as string | null;
   const fte = formData.get("fte") as string;
+  const hiringDate = formData.get("hiringDate") as string | null;
   const isActive = formData.get("isActive") as string | null;
 
   // Validation
@@ -57,6 +64,7 @@ export async function createEmployee(formData: FormData) {
         annualBenefits: parseDecimal(annualBenefits),
         annualBonus: parseDecimal(annualBonus),
         fte: fte ? parseFloatValue(fte) || 1.0 : 1.0,
+        hiringDate: parseDate(hiringDate),
         isActive: isActive !== null ? parseBoolean(isActive) : true, // Default to true
       },
     });
@@ -84,6 +92,7 @@ export async function updateEmployee(formData: FormData) {
   const annualBenefits = formData.get("annualBenefits") as string | null;
   const annualBonus = formData.get("annualBonus") as string | null;
   const fte = formData.get("fte") as string;
+  const hiringDate = formData.get("hiringDate") as string | null;
   const isActive = formData.get("isActive") as string | null;
 
   if (!id || !name || name.trim() === "") {
@@ -112,6 +121,7 @@ export async function updateEmployee(formData: FormData) {
         annualBenefits: parseDecimal(annualBenefits),
         annualBonus: parseDecimal(annualBonus),
         fte: fte ? parseFloatValue(fte) || 1.0 : 1.0,
+        hiringDate: parseDate(hiringDate),
         isActive: isActive !== null ? parseBoolean(isActive) : true,
       },
     });

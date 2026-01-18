@@ -73,6 +73,7 @@ export default async function EmployeesPage() {
     annualBenefits: emp.annualBenefits ? Number(emp.annualBenefits) : null,
     annualBonus: emp.annualBonus ? Number(emp.annualBonus) : null,
     fte: emp.fte,
+    hiringDate: emp.hiringDate,
     isActive: emp.isActive,
     overheadAllocs: emp.overheadAllocs.map((alloc) => ({
       overheadTypeId: alloc.overheadTypeId,

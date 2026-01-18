@@ -43,6 +43,7 @@ import {
 } from "@/lib/views";
 import { getEffectiveSettings } from "@/lib/effective-settings";
 import { getEffectiveOverheadAllocs } from "@/lib/effective-allocations";
+import { InactiveCostCard } from "./InactiveCostCard";
 
 // Load all data efficiently
 async function getTechStacks() {
@@ -463,19 +464,11 @@ export default async function DashboardPage({
         </Card>
 
         {totalInactiveMonthlyCost > 0 && (
-          <Card className="border-yellow-200 bg-yellow-50">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-yellow-800">
-                Inactive Monthly Cost ({currency})
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-yellow-900">{formatMoney(totalInactiveMonthlyCost, currency)}</div>
-              <div className="text-xs text-yellow-700 mt-1">
-                Excluded from calculations
-              </div>
-            </CardContent>
-          </Card>
+          <InactiveCostCard
+            totalInactiveMonthlyCost={totalInactiveMonthlyCost}
+            currency={currency}
+            viewId={viewId}
+          />
         )}
       </div>
 
@@ -726,12 +719,13 @@ export default async function DashboardPage({
                       <TableBody>
                         {techStacks.map((stack) => {
                           const stackDevs = devByStack.get(stack.id) || [];
+                          // Use raw QA/BA add-ons (without overheads)
                           const rowData = computeDevStackRow(
                             stack.id,
                             stackDevs,
                             activeOverheadTypes,
-                            qaAddOn.total,
-                            baAddOn.total,
+                            qaAddOn.raw,
+                            baAddOn.raw,
                             settings
                           );
 
@@ -739,11 +733,27 @@ export default async function DashboardPage({
                             return null;
                           }
 
-                          const totalReleaseableCost = rowData.totalReleaseableCost;
+                          // Add QA and BA overheads to each overhead type column
+                          const overheadsWithQaBa = rowData.overheads.map((devOverhead, ohIdx) => {
+                            const qaOverhead = qaAddOn.overheads[ohIdx] ?? 0;
+                            const baOverhead = baAddOn.overheads[ohIdx] ?? 0;
+                            const devOverheadValue = devOverhead ?? 0;
+                            return devOverheadValue + qaOverhead + baOverhead;
+                          });
+
+                          // Recalculate total overheads including QA/BA contributions
+                          const totalOverheadsWithQaBa = overheadsWithQaBa.reduce((sum, val) => sum + val, 0);
                           
-                          // Calculate COGS = DevCost + QAAddOnHr + BAAddOnHr
+                          // Recalculate total releaseable cost with raw QA/BA and updated overheads
+                          const qaAddOnRaw = qaAddOn.raw;
+                          const baAddOnRaw = baAddOn.raw;
+                          const totalReleaseableCost = rowData.rawCost !== null
+                            ? rowData.rawCost + totalOverheadsWithQaBa + qaAddOnRaw + baAddOnRaw
+                            : null;
+                          
+                          // Calculate COGS = DevCost + QAAddOnRaw + BAAddOnRaw
                           const devCost = rowData.rawCost ?? 0;
-                          const cogs = devCost + rowData.qaAddOn + rowData.baAddOn;
+                          const cogs = devCost + qaAddOnRaw + baAddOnRaw;
                           
                           // Calculate percentages for each component
                           const calculatePct = (component: number | null): number | null => {
@@ -766,17 +776,17 @@ export default async function DashboardPage({
                               </TableCell>
                               <TableCell className="text-right font-semibold">
                                 <div className="flex flex-col items-end">
-                                  <span>{formatMoney(rowData.qaAddOn, currency)}</span>
+                                  <span>{formatMoney(qaAddOnRaw, currency)}</span>
                                   <span className="text-xs text-muted-foreground">
-                                    {formatPct(calculatePct(rowData.qaAddOn))}
+                                    {formatPct(calculatePct(qaAddOnRaw))}
                                   </span>
                                 </div>
                               </TableCell>
                               <TableCell className="text-right font-semibold">
                                 <div className="flex flex-col items-end">
-                                  <span>{formatMoney(rowData.baAddOn, currency)}</span>
+                                  <span>{formatMoney(baAddOnRaw, currency)}</span>
                                   <span className="text-xs text-muted-foreground">
-                                    {formatPct(calculatePct(rowData.baAddOn))}
+                                    {formatPct(calculatePct(baAddOnRaw))}
                                   </span>
                                 </div>
                               </TableCell>
@@ -788,10 +798,10 @@ export default async function DashboardPage({
                                   </span>
                                 </div>
                               </TableCell>
-                              {rowData.overheads.map((overhead, ohIdx) => (
+                              {overheadsWithQaBa.map((overhead, ohIdx) => (
                                 <TableCell key={activeOverheadTypes[ohIdx].id} className="text-right">
                                   <div className="flex flex-col items-end">
-                                    <span>{overhead !== null ? formatMoney(overhead, currency) : "—"}</span>
+                                    <span>{overhead !== null && overhead !== 0 ? formatMoney(overhead, currency) : "—"}</span>
                                     <span className="text-xs text-muted-foreground">
                                       {formatPct(calculatePct(overhead))}
                                     </span>
@@ -800,9 +810,9 @@ export default async function DashboardPage({
                               ))}
                               <TableCell className="text-right font-semibold">
                                 <div className="flex flex-col items-end">
-                                  <span>{formatMoney(rowData.totalOverheads, currency)}</span>
+                                  <span>{formatMoney(totalOverheadsWithQaBa, currency)}</span>
                                   <span className="text-xs text-muted-foreground">
-                                    {formatPct(calculatePct(rowData.totalOverheads))}
+                                    {formatPct(calculatePct(totalOverheadsWithQaBa))}
                                   </span>
                                 </div>
                               </TableCell>

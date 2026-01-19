@@ -34,6 +34,10 @@ enum OverheadPeriod {
   quarterly
 }
 
+enum UserRole {
+  ADMIN
+}
+
 model TechStack {
   id        String     @id @default(cuid())
   name      String     @unique
@@ -165,4 +169,29 @@ model OverheadAllocationOverride {
   updatedAt      DateTime     @updatedAt
 
   @@unique([viewId, employeeId, overheadTypeId])
+}
+
+model User {
+  id           String    @id @default(cuid())
+  username     String    @unique
+  passwordHash String
+  role         UserRole  @default(ADMIN)
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  sessions     Session[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
 }

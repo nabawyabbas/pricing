@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Menu, X } from "lucide-react";
+import { Menu, X, LogOut } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ const navItems = [
   { href: "/settings", label: "Settings" },
   { href: "/views", label: "Views" },
   { href: "/results", label: "Results" },
+  { href: "/admin/users", label: "Users" },
 ];
 
 const pageTitles: Record<string, string> = {
@@ -36,9 +37,23 @@ interface AppShellProps {
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const { actions } = useAppShellActions();
   const pageTitle = pageTitles[pathname] || "Pricing App";
+
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+      router.push("/login");
+      router.refresh();
+    } catch (error) {
+      console.error("Logout error:", error);
+      setLoggingOut(false);
+    }
+  };
 
   const NavLinks = () => (
     <nav className="space-y-1">
@@ -74,6 +89,18 @@ export function AppShell({ children }: AppShellProps) {
           <div className="flex-grow px-3">
             <NavLinks />
           </div>
+          {/* Logout button at bottom */}
+          <div className="px-3 pt-4 mt-auto border-t">
+            <Button
+              variant="ghost"
+              className="w-full justify-start text-muted-foreground hover:text-foreground"
+              onClick={handleLogout}
+              disabled={loggingOut}
+            >
+              <LogOut className="mr-2 h-4 w-4" />
+              {loggingOut ? "Logging out..." : "Logout"}
+            </Button>
+          </div>
         </div>
       </aside>
 
@@ -101,6 +128,18 @@ export function AppShell({ children }: AppShellProps) {
             </div>
             <div className="flex-grow px-3 py-4 overflow-y-auto">
               <NavLinks />
+            </div>
+            {/* Logout button at bottom */}
+            <div className="px-3 py-4 mt-auto border-t">
+              <Button
+                variant="ghost"
+                className="w-full justify-start text-muted-foreground hover:text-foreground"
+                onClick={handleLogout}
+                disabled={loggingOut}
+              >
+                <LogOut className="mr-2 h-4 w-4" />
+                {loggingOut ? "Logging out..." : "Logout"}
+              </Button>
             </div>
           </div>
         </SheetContent>

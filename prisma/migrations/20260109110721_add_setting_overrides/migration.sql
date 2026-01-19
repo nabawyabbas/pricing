@@ -18,3 +18,4 @@ CREATE TABLE `SettingOverride` (
 ALTER TABLE `SettingOverride` ADD CONSTRAINT `SettingOverride_viewId_fkey` FOREIGN KEY (`viewId`) REFERENCES `PricingView`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 
+

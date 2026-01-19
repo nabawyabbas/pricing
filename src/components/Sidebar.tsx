@@ -1,8 +1,9 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useState } from "react";
+import { LogOut } from "lucide-react";
 
 const navItems = [
   { href: "/", label: "Dashboard" },
@@ -11,10 +12,25 @@ const navItems = [
   { href: "/overheads", label: "Overheads" },
   { href: "/settings", label: "Settings" },
   { href: "/results", label: "Results" },
+  { href: "/admin/users", label: "Users" },
 ];
 
 export function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+      router.push("/login");
+      router.refresh();
+    } catch (error) {
+      console.error("Logout error:", error);
+      setLoggingOut(false);
+    }
+  };
 
   return (
     <>
@@ -97,6 +113,45 @@ export function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
               })}
             </ul>
           </nav>
+
+          {/* Logout button at bottom */}
+          <div style={{ marginTop: "2rem", paddingTop: "2rem", borderTop: "1px solid #374151" }}>
+            <button
+              onClick={handleLogout}
+              disabled={loggingOut}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                width: "100%",
+                padding: "0.75rem 1rem",
+                borderRadius: "6px",
+                backgroundColor: "transparent",
+                color: "#d1d5db",
+                border: "1px solid #374151",
+                cursor: loggingOut ? "not-allowed" : "pointer",
+                opacity: loggingOut ? 0.6 : 1,
+                fontSize: "0.875rem",
+                fontWeight: "500",
+                transition: "all 0.2s",
+              }}
+              onMouseEnter={(e) => {
+                if (!loggingOut) {
+                  e.currentTarget.style.backgroundColor = "#374151";
+                  e.currentTarget.style.color = "white";
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!loggingOut) {
+                  e.currentTarget.style.backgroundColor = "transparent";
+                  e.currentTarget.style.color = "#d1d5db";
+                }
+              }}
+            >
+              <LogOut size={16} />
+              {loggingOut ? "Logging out..." : "Logout"}
+            </button>
+          </div>
         </div>
       </aside>
     </>

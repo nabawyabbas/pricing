@@ -32,7 +32,7 @@ import {
   computeEffectiveOverheadTypeActive,
 } from "@/lib/views";
 import { formatMoney, formatPercent, formatNumber } from "@/lib/format";
-import { SETTINGS_METADATA, type SettingMetadata } from "@/app/(app)/settings/settingsMetadata";
+import { SETTINGS_METADATA, type SettingMetadata } from "@/app/(protected)/settings/settingsMetadata";
 import { type Settings } from "@/lib/pricing";
 import { AllocationCell } from "./AllocationCell";
 
